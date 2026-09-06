@@ -362,11 +362,17 @@ else:
                 pass
             except Exception as e:
                 print(f"[GACHA SETUP] Notice registering {cls}: {e}")
-        if hasattr(bpy.types, "VIEW3D_PT_context_properties"):
-            try:
-                bpy.types.VIEW3D_PT_context_properties.bl_order = 100
-            except Exception:
-                pass
+        for cls_name in dir(bpy.types):
+            if cls_name.startswith("VIEW3D_PT_"):
+                cls_prop = getattr(bpy.types, cls_name, None)
+                if cls_prop and getattr(cls_prop, "bl_category", "") == "Item" and getattr(cls_prop, "bl_label", "") in ["Properties", "Context Properties"]:
+                    try:
+                        bpy.utils.unregister_class(cls_prop)
+                        cls_prop.bl_order = 4
+                        cls_prop.bl_options = {'DEFAULT_CLOSED'}
+                        bpy.utils.register_class(cls_prop)
+                    except Exception:
+                        pass
         register_wuwa_properties()
         register_zzz_properties()
         register_hsr_properties()

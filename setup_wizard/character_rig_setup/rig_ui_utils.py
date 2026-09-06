@@ -217,7 +217,7 @@ def distribute_standard_rig_bones(
 
     # 4. Offsets
     fast_move([
-        "root", "root.001", "torso.001", "torso.002",
+        "root.001", "torso.001", "torso.002",
         "hand_ik_wrist.L", "hand_ik_wrist.R",
         "foot_ik_sub.L", "foot_ik_sub.R",
     ], 26, "Offsets")
@@ -342,10 +342,10 @@ def distribute_standard_rig_bones(
     fast_move(["thigh_fk.R", "shin_fk.R", "foot_fk.R", "toe_fk.R"], 17, "Leg.R (FK)")
 
     # 19. Root
-    b2c("root.002", 28, "Root")
+    b2c("root", 28, "Root")
     b2c("root_2", 28, "Root")
-    if "root.002" not in arm_data.bones and "root_2" not in arm_data.bones:
-        b2c("root", 28, "Root")
+    if "root.002" in arm_data.bones:
+        b2c("root.002", 28, "Root")
 
     # 20 & 21. Hair & Clothes & Breasts
     fast_move(["breast.L", "breast.R"], 3, "Torso (IK)")
@@ -787,21 +787,14 @@ def modify_and_run_rig_ui_script(
                 parts = complete_rig_text.split(divider)
                 complete_rig_text = parts[0] + divider + text + parts[1]
 
-    # Set Rig Layers header and order (order 1)
-    if 'bl_label = "Rig Layers"' in complete_rig_text:
-        complete_rig_text = complete_rig_text.replace(
-            'bl_label = "Rig Layers"',
-            'bl_label = "Rig Layers: " + rig_name\n    bl_order = 1'
-        )
-    elif 'bl_label = "Rig Layers: " + rig_name' in complete_rig_text and 'bl_order = 1' not in complete_rig_text:
-        complete_rig_text = complete_rig_text.replace(
-            'bl_label = "Rig Layers: " + rig_name',
-            'bl_label = "Rig Layers: " + rig_name\n    bl_order = 1'
-        )
-
-    # Set Rig Properties header, order (order 2), and collapse by default
+    # Set Rig Properties header and order (order 2) - COLLAPSED by default
     prop_replacement = 'bl_label = "Rig Properties: " + rig_name\n    bl_order = 2\n    bl_options = {\'DEFAULT_CLOSED\'}'
-    if 'bl_label = "Rig Main Properties"' in complete_rig_text:
+    if 'bl_label = "Rig Properties: " + rig_name\n    bl_order = 2' in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(
+            'bl_label = "Rig Properties: " + rig_name\n    bl_order = 2',
+            prop_replacement
+        )
+    elif 'bl_label = "Rig Main Properties"' in complete_rig_text:
         complete_rig_text = complete_rig_text.replace(
             'bl_label = "Rig Main Properties"',
             prop_replacement
@@ -811,11 +804,70 @@ def modify_and_run_rig_ui_script(
             'bl_label = "Properties"',
             prop_replacement
         )
-    elif 'bl_label = "Rig Properties: " + rig_name' in complete_rig_text and 'DEFAULT_CLOSED' not in complete_rig_text:
+    elif 'bl_label = "Rig Properties: " + rig_name' in complete_rig_text:
         complete_rig_text = complete_rig_text.replace(
             'bl_label = "Rig Properties: " + rig_name',
             prop_replacement
         )
+
+    # Set Rig Layers header and order (order 3) - COLLAPSED by default
+    layers_replacement = 'bl_label = "Rig Layers: " + rig_name\n    bl_order = 3\n    bl_options = {\'DEFAULT_CLOSED\'}'
+    if 'bl_label = "Rig Layers: " + rig_name\n    bl_order = 1' in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(
+            'bl_label = "Rig Layers: " + rig_name\n    bl_order = 1',
+            layers_replacement
+        )
+    elif 'bl_label = "Rig Layers"' in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(
+            'bl_label = "Rig Layers"',
+            layers_replacement
+        )
+    elif 'bl_label = "Rig Layers: " + rig_name' in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(
+            'bl_label = "Rig Layers: " + rig_name',
+            layers_replacement
+        )
+
+    # Safe selected_bones try-block and persistent General Settings box in RigUI.draw
+    old_sel_block = """        try:
+            selected_bones = set(bone.name for bone in context.selected_pose_bones)
+            selected_bones.add(context.active_pose_bone.name)
+        except (AttributeError, TypeError):
+            return"""
+
+    new_sel_block = """        selected_bones = set()
+        if getattr(context, "selected_pose_bones", None):
+            selected_bones.update(b.name for b in context.selected_pose_bones)
+        if getattr(context, "active_pose_bone", None):
+            selected_bones.add(context.active_pose_bone.name)"""
+
+    if old_sel_block in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(old_sel_block, new_sel_block)
+
+    target_after_is_selected = """        def is_selected(names):
+            # Returns whether any of the named bones are selected.
+            if isinstance(names, list) or isinstance(names, set):
+                return not selected_bones.isdisjoint(names)
+            elif names in selected_bones:
+                return True
+            return False"""
+
+    general_box_injection = target_after_is_selected + """
+
+        # General Settings (accessible even without clicking plate-settings)
+        if "plate-settings" in pose_bones and not is_selected({"plate-settings"}):
+            box = layout.box()
+            box.label(text="General Settings", icon='PREFERENCES')
+            box.prop(pose_bones["plate-settings"], '["Toggle Skirt Constraints"]', text="Auto Skirt Constraints", slider=True)
+            box.prop(pose_bones["plate-settings"], '["Toggle Shoulder Constraints"]', text="Auto Shoulder Constraints", slider=True)
+            box.prop(pose_bones["plate-settings"], '["Head Follow"]', text="Head Follow", slider=True)
+            box.prop(pose_bones["plate-settings"], '["Neck Follow"]', text="Neck Follow", slider=True)
+            box.prop(pose_bones["plate-settings"], '["Use Head Controller"]', text="Use Head Tracker Controller", slider=True)
+            box.prop(pose_bones["plate-settings"], '["EyeCorrection"]', text="Adjust Pupil Wink Distance", slider=True)
+            box.prop(pose_bones["plate-settings"], '["Viewport Outlines"]', text="Show Viewport Outlines", slider=True)"""
+
+    if target_after_is_selected in complete_rig_text and 'not is_selected({"plate-settings"})' not in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(target_after_is_selected, general_box_injection)
 
     # Blender 5.1+ compatibility fix: strip register_usetime_properties
     complete_rig_text = re.sub(
@@ -830,6 +882,30 @@ def modify_and_run_rig_ui_script(
         complete_rig_text,
         flags=re.MULTILINE,
     )
+
+    # Order 4: Reorder Custom Properties panel to be last (order 4) and collapsed by default
+    properties_order_fix = """
+
+def _reorder_and_collapse_custom_properties():
+    import bpy
+    for cls_name in dir(bpy.types):
+        if cls_name.startswith("VIEW3D_PT_"):
+            cls = getattr(bpy.types, cls_name, None)
+            if cls and getattr(cls, "bl_category", "") == "Item" and getattr(cls, "bl_label", "") in ["Properties", "Context Properties"]:
+                try:
+                    bpy.utils.unregister_class(cls)
+                    cls.bl_order = 4
+                    cls.bl_options = {'DEFAULT_CLOSED'}
+                    bpy.utils.register_class(cls)
+                except Exception:
+                    pass
+
+try:
+    _reorder_and_collapse_custom_properties()
+except Exception:
+    pass
+"""
+    complete_rig_text += properties_order_fix
 
     # Write modified content
     rig_file.clear()
@@ -847,6 +923,20 @@ def modify_and_run_rig_ui_script(
         ctx["edit_text"] = rig_file
         with bpy.context.temp_override(edit_text=rig_file):
             bpy.ops.text.run_script()
+
+        # Enforce Properties panel order 4 and collapsed in active session
+        for cls_name in dir(bpy.types):
+            if cls_name.startswith("VIEW3D_PT_"):
+                cls = getattr(bpy.types, cls_name, None)
+                if cls and getattr(cls, "bl_category", "") == "Item" and getattr(cls, "bl_label", "") in ["Properties", "Context Properties"]:
+                    try:
+                        bpy.utils.unregister_class(cls)
+                        cls.bl_order = 4
+                        cls.bl_options = {'DEFAULT_CLOSED'}
+                        bpy.utils.register_class(cls)
+                    except Exception:
+                        pass
+
         print(f"[RIG UI] Successfully updated and executed UI script for '{clean_char_name}'")
         return True
     except Exception as ex:

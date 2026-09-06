@@ -16,6 +16,7 @@ from setup_wizard.character_rig_setup.rig_ui_utils import (
     modify_and_run_rig_ui_script,
 )
 
+
 def rig_character(
         file_path,
         lighting_panel_version, 
@@ -1243,8 +1244,9 @@ def rig_character(
         if "Rig" in obj.name:
             this_obj = obj
 
-    this_obj.pose.bones["root"].custom_shape = bpy.data.objects["root plate.002"]
-    this_obj.pose.bones["root"].use_custom_shape_bone_size = False
+    if "root" in this_obj.pose.bones and "root plate.002" in bpy.data.objects:
+        this_obj.pose.bones["root"].custom_shape = bpy.data.objects["root plate.002"]
+        this_obj.pose.bones["root"].use_custom_shape_bone_size = False
     
     this_obj.pose.bones["head"].custom_shape_scale_xyz = (1.65,1.65,1.65)
     this_obj.pose.bones["head"].custom_shape = bpy.data.objects["neck"]
@@ -1409,20 +1411,26 @@ def rig_character(
 
     # In edit mode, set parent bones.
     bpy.ops.object.mode_set(mode='EDIT')
+    head_b = armature.edit_bones.get('head')
+    head_z = head_b.head.z if head_b else 1.45
+
+    # Ensure plate-settings control bone above head (settings gear bone)
+    if 'PROPERTIES' in armature.edit_bones:
+        armature.edit_bones.remove(armature.edit_bones['PROPERTIES'])
+
     if 'plate-settings' not in armature.edit_bones:
         plate_settings_bone = armature.edit_bones.new('plate-settings')
-        plate_settings_bone.head = (0, 0, 0)
-        plate_settings_bone.tail = (0, 0, 1)
-    armature.edit_bones['plate-settings'].parent = armature.edit_bones['head']
+    else:
+        plate_settings_bone = armature.edit_bones['plate-settings']
+    head_b = armature.edit_bones.get('head')
+    if head_b:
+        plate_settings_bone.parent = head_b
     if armature.edit_bones.get(LightingPanelNames.Bones.LIGHTING_PANEL):
         armature.edit_bones[LightingPanelNames.Bones.LIGHTING_PANEL].parent = armature.edit_bones['head']
     
-    armature.edit_bones['plate-settings'].head = armature.edit_bones['head'].head.copy()
-    armature.edit_bones['plate-settings'].tail = armature.edit_bones['head'].head.copy()
-    armature.edit_bones['plate-settings'].head.y = 0
-    armature.edit_bones['plate-settings'].tail.y = 0
-    armature.edit_bones['plate-settings'].head.z += 0.5
-    armature.edit_bones['plate-settings'].tail.z += 0.6
+    plate_settings_bone.head = Vector((0.0, 0.0, head_z + 0.35))
+    plate_settings_bone.tail = Vector((0.0, 0.0, head_z + 0.45))
+    plate_settings_bone.roll = 0
     
     # While here, set inherit scales as needed.
     armature.edit_bones['upper_arm_parent.L'].inherit_scale="NONE"
@@ -1455,7 +1463,8 @@ def rig_character(
         armature.edit_bones['foot_spin_ik.R'].tail.z = 0
     
     # SET RELATIONSHIPS as needed after bringing in new bones  
-    armature.edit_bones['root'].parent = armature.edit_bones['root-inner']
+    if 'root' in armature.edit_bones and 'root-inner' in armature.edit_bones:
+        armature.edit_bones['root'].parent = armature.edit_bones['root-inner']
     
     armature.edit_bones['torso-outer'].parent = armature.edit_bones['MCH-torso.parent']
     armature.edit_bones['torso'].parent = armature.edit_bones['torso-inner']
@@ -1479,14 +1488,38 @@ def rig_character(
     armature.edit_bones['MCH-upper_arm_ik_target.L'].parent = armature.edit_bones['mch-hand-ik-wrist-L']    
     armature.edit_bones['MCH-upper_arm_ik_target.R'].parent = armature.edit_bones['mch-hand-ik-wrist-R']
     
-    armature.edit_bones['shoulder_driver.L'].parent = armature.edit_bones['ORG-spine.003']
-    armature.edit_bones['shoulder_driver.R'].parent = armature.edit_bones['ORG-spine.003']
-    armature.edit_bones['MCH-shoulder_follow.L'].parent = armature.edit_bones['ORG-spine.003']
-    armature.edit_bones['MCH-shoulder_follow.R'].parent = armature.edit_bones['ORG-spine.003']
-    armature.edit_bones['shoulder.L'].parent = armature.edit_bones['MCH-shoulder_follow.L']
-    armature.edit_bones['shoulder.R'].parent = armature.edit_bones['MCH-shoulder_follow.R']
+    # Clean up template shoulder driver bones that cause cyclic dependencies
+    for sb in ['shoulder_driver.L', 'shoulder_driver.R', 'MCH-shoulder_follow.L', 'MCH-shoulder_follow.R']:
+        if sb in armature.edit_bones:
+            armature.edit_bones.remove(armature.edit_bones[sb])
+
+    # Shoulders parent directly to upper spine / chest (matching RIG - Miyabi reference)
+    spine03 = armature.edit_bones.get('ORG-spine.003') or armature.edit_bones.get('chest')
+    if spine03:
+        if 'shoulder.L' in armature.edit_bones:
+            armature.edit_bones['shoulder.L'].parent = spine03
+        if 'shoulder.R' in armature.edit_bones:
+            armature.edit_bones['shoulder.R'].parent = spine03
+
+    # Add Skirt calculation bones parented to hips
+    hips_b = armature.edit_bones.get("hips") or armature.edit_bones.get("torso")
+    def_thigh_l = armature.edit_bones.get("DEF-thigh.L") or armature.edit_bones.get("thigh.L") or armature.edit_bones.get("thigh_fk.L")
+    def_thigh_r = armature.edit_bones.get("DEF-thigh.R") or armature.edit_bones.get("thigh.R") or armature.edit_bones.get("thigh_fk.R")
+    if hips_b and def_thigh_l:
+        eb_calc_l = armature.edit_bones.get("MCH-Skirt_Calc_X.L") or armature.edit_bones.new("MCH-Skirt_Calc_X.L")
+        eb_calc_l.parent = hips_b
+        eb_calc_l.head = def_thigh_l.head.copy()
+        eb_calc_l.tail = def_thigh_l.head.copy()
+        eb_calc_l.tail.z -= 0.15
+
+    if hips_b and def_thigh_r:
+        eb_calc_r = armature.edit_bones.get("MCH-Skirt_Calc_X.R") or armature.edit_bones.new("MCH-Skirt_Calc_X.R")
+        eb_calc_r.parent = hips_b
+        eb_calc_r.head = def_thigh_r.head.copy()
+        eb_calc_r.tail = def_thigh_r.head.copy()
+        eb_calc_r.tail.z -= 0.15
    
-    # RENAME imported bones
+    # RENAME imported bones (Genshin 3-tier root: root=Master, root.001=Offset, root.002=Rigify internal)
     rename_bones_list = [("root", "root.002")]
     rename_bones_list.append(("root-inner", "root.001"))
     rename_bones_list.append(("root-outer", "root"))
@@ -1652,19 +1685,7 @@ def rig_character(
     armature.edit_bones['forearm_tweak-pin.R'].roll = armature.edit_bones['MCH-forearm_ik.R'].roll
     armature.edit_bones['forearm_tweak-pin.R'].length -= 0.15
     
-    armature.edit_bones['shoulder_driver.L'].head = project_line_in_space(armature.edit_bones['shoulder.L'].head.copy(),armature.edit_bones['shoulder.L'].tail.copy(), armature.edit_bones['hand_ik.L'].head.x)
-    armature.edit_bones['shoulder_driver.L'].tail = project_line_in_space(armature.edit_bones['shoulder.L'].head.copy(),armature.edit_bones['shoulder.L'].tail.copy(), armature.edit_bones['hand_ik.L'].head.x)
-    armature.edit_bones['shoulder_driver.L'].tail.y += 0.1
-    
-    armature.edit_bones['shoulder_driver.R'].head = project_line_in_space(armature.edit_bones['shoulder.R'].head.copy(),armature.edit_bones['shoulder.R'].tail.copy(), armature.edit_bones['hand_ik.R'].head.x)
-    armature.edit_bones['shoulder_driver.R'].tail = project_line_in_space(armature.edit_bones['shoulder.R'].head.copy(),armature.edit_bones['shoulder.R'].tail.copy(), armature.edit_bones['hand_ik.R'].head.x)
-    armature.edit_bones['shoulder_driver.R'].tail.y += 0.1
-    
-    armature.edit_bones['MCH-shoulder_follow.L'].head = armature.edit_bones['shoulder.L'].head.copy()
-    armature.edit_bones['MCH-shoulder_follow.L'].tail = armature.edit_bones['shoulder.L'].tail.copy()
-    
-    armature.edit_bones['MCH-shoulder_follow.R'].head = armature.edit_bones['shoulder.R'].head.copy()
-    armature.edit_bones['MCH-shoulder_follow.R'].tail = armature.edit_bones['shoulder.R'].tail.copy()
+
 
    
     try:
@@ -1737,99 +1758,92 @@ def rig_character(
     del_bone("palm.L")
     del_bone("palm.R")
 
-    # Function that validates bone name given for respective area. (if bone passes checks to be considered front)
-    def validate_skirt(bone_name, area):
-        # Below is the list of bone 'prefix's we consider valid to send into the skirt/dress lists
-        if bone_name.startswith("+Skirt"):
-            temp_name = bone_name[6:]
-        elif bone_name.startswith("+Hem"):
-            temp_name = bone_name[4:]
-        elif bone_name.startswith("+Overcoat"):
-            temp_name = bone_name[9:]
-        elif bone_name.startswith("+VisionPelvis"):
-            temp_name = bone_name[13:]
-        else: return False
-                  
-        if area == "FRONT":
-            if temp_name[0] == "F":
-                return True
-            
-        elif area == "SIDE":
-            if temp_name[0] == "S":
-                return True
-            
-        elif area == "BACK":
-            if temp_name[0] == "B":
-                return True
-            
-        else: return False
-    # Certain bones with skirt naming exist with pelvis spine as parent, but theyre NOT skirt bones we want. remove them.    
-    def trunc_bad_bones(pb, current=None):
-        bad = []
-        if current is None:
-            current = pb
-        
-        current_bone = armature.edit_bones[current]
-        
-        for bone in armature.edit_bones:
-            if bone.parent == current_bone:
-                bad.append(bone.name)
-                bad.extend(trunc_bad_bones(pb, bone.name))
-                
-        return bad
+    # Universal Skirt Detection & Radial Classification
+    # Identifies skirt/dress/majia chains and classifies them into 8 radial quadrants relative to hips/pelvis:
+    # FRONT_C, FRONT_L, SIDE_L, BACK_L, BACK_C, BACK_R, SIDE_R, FRONT_R
+    pelvis_ref = armature.edit_bones.get("DEF-spine.001") or armature.edit_bones.get("hips") or armature.edit_bones.get("pelvis")
+    pelvis_pos = pelvis_ref.head.copy() if pelvis_ref else Vector((0.0, 0.0, 1.0))
     
-    list_of_bad_bones = trunc_bad_bones("DEF-spine.003")
+    # Hoyoverse/ZZZ forward detection: default forward is -Y
+    forward_sign = -1.0
+    head_b_ref = armature.edit_bones.get("head") or armature.edit_bones.get("DEF-head")
+    for b in armature.edit_bones:
+        if "eye" in b.name.lower() and head_b_ref:
+            if b.head.y > head_b_ref.head.y:
+                forward_sign = 1.0
+            else:
+                forward_sign = -1.0
+            break
 
-    # Functions that loop through skirt bones (Front, Sides, Back) each return a list
-    def identify_children_for_skirt(pb, current=None, excluded_parent="DEF-spine.003"):
-        child_bones = []
-        if current is None:
-            current = pb
-        
-        current_bone = armature.edit_bones[current]
-        
-        for bone in armature.edit_bones:
-            if bone.parent == excluded_parent:
+    # Find root of each skirt/dress chain
+    skirt_keywords = ["skirt", "dress", "hem", "qun"]
+    skirt_chain_roots = []
+    for b in armature.edit_bones:
+        b_low = b.name.lower()
+        if any(k in b_low for k in skirt_keywords):
+            # Exclude breast, chest, arm, sleeve, furisode, hand, collar
+            if any(ex in b_low for ex in ["breast", "chest", "arm", "sleeve", "furisode", "hand", "shoulder", "collar"]):
                 continue
-            elif bone.parent == current_bone:
-                child_bones.append(bone)
-                child_bones.extend(identify_children_for_skirt(pb, bone.name, excluded_parent))
-                
-        return child_bones
-    
-    parent_bone_name = "DEF-spine.001"
-    weird_skeletons = ["Clorinde"]
-    for s in weird_skeletons:
-        if s in char_name:
-            parent_bone_name = "+PelvisTwist CF A01"
-            
-    skirt_children = identify_children_for_skirt(parent_bone_name)
-    
-    def scan_skirt(area):
-        skirt_bones = []
-             
-        for edit_bone in skirt_children:
-            if edit_bone.name not in list_of_bad_bones:
-                if validate_skirt(edit_bone.name, area):
-                    skirt_bones.append(edit_bone.name)
+            # Also ensure parent is at or below pelvis level (not attached to upper spine like spine.002 or spine.003)
+            if b.parent and any(p_ex in b.parent.name.lower() for p_ex in ["spine.002", "spine.003", "chest", "neck", "shoulder", "arm", "head"]):
+                continue
+            is_chain_root = (not b.parent) or not any(k in b.parent.name.lower() for k in skirt_keywords)
+            if is_chain_root:
+                skirt_chain_roots.append(b)
 
-        return skirt_bones
+    # Classify each chain root and collect bone names by quadrant and chain depth
+    skirt_quadrant_chains = {
+        "FRONT_C": [],
+        "FRONT_L": [],
+        "SIDE_L": [],
+        "BACK_L": [],
+        "BACK_C": [],
+        "BACK_R": [],
+        "SIDE_R": [],
+        "FRONT_R": []
+    }
 
-    # On each list, straighten the bone (Straighten on the head)
-    front_skirt_bones = scan_skirt("FRONT")
-    side_skirt_bones = scan_skirt("SIDE")
-    back_skirt_bones = scan_skirt("BACK")
+    import math
+    for root_eb in skirt_chain_roots:
+        dx = root_eb.head.x - pelvis_pos.x
+        dy = (root_eb.head.y - pelvis_pos.y) * forward_sign
+        angle = math.degrees(math.atan2(dx, dy))
 
-    def zero_roll(bone_name):
-        this_bone = armature.edit_bones[bone_name].roll = 0
-    for bone in front_skirt_bones:
-        zero_roll(bone)
-        
-    for bone in side_skirt_bones:
-        zero_roll(bone)
-        
-    for bone in back_skirt_bones:
-        zero_roll(bone)                                                            
+        if -22.5 <= angle < 22.5:
+            cat = "FRONT_C"
+        elif 22.5 <= angle < 67.5:
+            cat = "FRONT_L"
+        elif 67.5 <= angle < 112.5:
+            cat = "SIDE_L"
+        elif 112.5 <= angle < 157.5:
+            cat = "BACK_L"
+        elif angle >= 157.5 or angle < -157.5:
+            cat = "BACK_C"
+        elif -157.5 <= angle < -112.5:
+            cat = "BACK_R"
+        elif -112.5 <= angle < -67.5:
+            cat = "SIDE_R"
+        elif -67.5 <= angle < -22.5:
+            cat = "FRONT_R"
+        else:
+            cat = "FRONT_C"
+
+        # Walk children chain
+        chain = [root_eb.name]
+        curr = root_eb
+        while curr.children:
+            sk_kids = [c for c in curr.children if any(k in c.name.lower() for k in skirt_keywords)]
+            if not sk_kids:
+                break
+            curr = sk_kids[0]
+            chain.append(curr.name)
+
+        skirt_quadrant_chains[cat].append(chain)
+
+    print(f"[ZZZ RIG] Detected skirt chains in {len(skirt_chain_roots)} locations across 8 radial quadrants.")
+    front_skirt_bones = [b for ch in skirt_quadrant_chains["FRONT_C"] + skirt_quadrant_chains["FRONT_L"] + skirt_quadrant_chains["FRONT_R"] for b in ch]
+    side_skirt_bones = [b for ch in skirt_quadrant_chains["SIDE_L"] + skirt_quadrant_chains["SIDE_R"] for b in ch]
+    back_skirt_bones = [b for ch in skirt_quadrant_chains["BACK_C"] + skirt_quadrant_chains["BACK_L"] + skirt_quadrant_chains["BACK_R"] for b in ch]                                                            
 
     # Switch to pose mode for subsequent operations
     bpy.ops.object.mode_set(mode='POSE')
@@ -1880,59 +1894,111 @@ def rig_character(
     # Adding Shape Key Drivers
     ourRig = char_name+"Rig"
     
-    # Initialize UI properties on plate-settings so drivers don't fail internally
-    try:
-        plate = bpy.data.objects[ourRig].pose.bones["plate-settings"]
-        if "EyeCorrection" not in plate:
-            plate["EyeCorrection"] = 1.00
-        if "Toggle Skirt Constraints" not in plate:
-            plate["Toggle Skirt Constraints"] = 1.00
-        if "Toggle Shoulder Constraints" not in plate:
-            plate["Toggle Shoulder Constraints"] = 1.00
-        if "Head Follow" not in plate:
-            plate["Head Follow"] = 0.00
-        if "Neck Follow" not in plate:
-            plate["Neck Follow"] = 0.00
-        if "Use Head Controller" not in plate:
-            plate["Use Head Controller"] = 0.00
-        if "Viewport Outlines" not in plate:
-            plate["Viewport Outlines"] = 1.00
-    except:
-        pass
+    # Initialize UI properties and gear shape on plate-settings (Genshin convention)
+    rig_obj_ref = bpy.data.objects.get(ourRig)
+    if rig_obj_ref and hasattr(rig_obj_ref, "pose") and rig_obj_ref.pose:
+        plate = rig_obj_ref.pose.bones.get("plate-settings")
+        if plate:
+            # Match the exact gear mesh of arm controls (upper_arm_parent.L/R)
+            gear_obj = None
+            for arm_bname in ["upper_arm_parent.L", "upper_arm_parent.R", "thigh_parent.L", "thigh_parent.R"]:
+                pb_gear = rig_obj_ref.pose.bones.get(arm_bname)
+                if pb_gear and pb_gear.custom_shape:
+                    gear_obj = pb_gear.custom_shape
+                    break
+            if not gear_obj:
+                gear_obj = bpy.data.objects.get("setting-circle")
+
+            if gear_obj:
+                plate.custom_shape = gear_obj
+                plate.use_custom_shape_bone_size = False
+                plate.custom_shape_scale_xyz = (0.05, 0.05, 0.05)
+                plate.custom_shape_rotation_euler = (1.5708, 0.0, 0.0)
+                plate.custom_shape_translation = (0.0, 0.0, 0.0)
+
+            def set_prop(pb_bone, prop_name, default_val, min_val=0.0, max_val=1.0, description=""):
+                if not pb_bone:
+                    return
+                if prop_name not in pb_bone:
+                    pb_bone[prop_name] = default_val
+                try:
+                    pb_bone.id_properties_ui(prop_name).update(
+                        default=default_val,
+                        min=min_val,
+                        max=max_val,
+                        soft_min=min_val,
+                        soft_max=max_val,
+                        description=description
+                    )
+                except Exception:
+                    pass
+
+            set_prop(plate, "Toggle Skirt Constraints", 1.00, 0.0, 1.0, "Auto Skirt Constraints")
+            set_prop(plate, "Toggle Shoulder Constraints", 0.00, 0.0, 1.0, "Auto Shoulder Follow Hand IK (0=natural chest rotation)")
+            set_prop(plate, "Head Follow", 0.00, 0.0, 1.0, "Head Follow")
+            set_prop(plate, "Neck Follow", 0.50, 0.0, 1.0, "Neck Follow")
+            set_prop(plate, "Use Head Controller", 0.00, 0.0, 1.0, "Use Head Tracker Controller")
+            set_prop(plate, "EyeCorrection", 1.00, 0.0, 1.0, "Adjust Pupil Wink Distance")
+            set_prop(plate, "Viewport Outlines", 1.00, 0.0, 1.0, "Show Viewport Outlines")
+            set_prop(plate, "Skirt_Auto", 1.00, 0.0, 1.0, "Auto Skirt Constraints")
+            set_prop(plate, "Skirt_Follow", 0.00, 0.0, 1.0, "Skirt Follow (Torso)")
+            set_prop(plate, "Shirt_Follow", 1.00, 0.0, 1.0, "Shirt Follow")
+
+        # Setup DAMPED_TRACK on MCH-Skirt_Calc_X bones targeting thighs so they follow both IK and FK
+        for calc_bname, def_thigh in [("MCH-Skirt_Calc_X.L", "DEF-thigh.L"), ("MCH-Skirt_Calc_X.R", "DEF-thigh.R")]:
+            calc_pb = rig_obj_ref.pose.bones.get(calc_bname)
+            if calc_pb and def_thigh in rig_obj_ref.pose.bones:
+                for c in list(calc_pb.constraints):
+                    calc_pb.constraints.remove(c)
+                c_track = calc_pb.constraints.new('DAMPED_TRACK')
+                c_track.name = "Track Thigh"
+                c_track.target = rig_obj_ref
+                c_track.subtarget = def_thigh
+                c_track.head_tail = 0.8
+                c_track.track_axis = 'TRACK_NEGATIVE_Z'
 
     # Loop through skirt bones list. 
-
-    # converts deg to calc
     def rad(num):
         return num * (pi/180) 
 
-    # Perform more operations on number if needed.
     def calc(num, cut=False):
         percent = 0.8
         if cut:
             return rad(num*percent)
         else: return rad(num)
 
-    # For front bones adjust number by depth
+    # Universal skirt bone Transform constraint builder
     def add_const(skirt_bone, name, bone, expression, driver=True, trans_rot="ROT_X", f_min_x=calc(-1), f_max_x = calc(1), f_min_y = 0, f_max_y = 0, f_min_z = 0, f_max_z = 0, map_x='X', map_y='Y', map_z='Z', t_min_x=0, t_max_x=0, t_min_y=0, t_max_y=0, t_min_z=0, t_max_z=0):
-        armature = bpy.context.scene.objects[ourRig]
+        armature = bpy.context.scene.objects.get(ourRig)
+        if not armature:
+            return
+        this_bone = armature.pose.bones.get(skirt_bone)
+        if not this_bone:
+            return
 
-        this_bone = bpy.context.scene.objects[char_name+"Rig"].pose.bones[skirt_bone]
+        # Route through calculation tracking bone so deflection evaluates in both IK and FK leg poses
+        sub_bone = bone
+        if bone in ["DEF-thigh.L", "thigh.L", "thigh_fk.L"]:
+            if "MCH-Skirt_Calc_X.L" in armature.pose.bones:
+                sub_bone = "MCH-Skirt_Calc_X.L"
+        elif bone in ["DEF-thigh.R", "thigh.R", "thigh_fk.R"]:
+            if "MCH-Skirt_Calc_X.R" in armature.pose.bones:
+                sub_bone = "MCH-Skirt_Calc_X.R"
+
         co = this_bone.constraints.new('TRANSFORM')
         co.name = name
         co.target = our_char
-        co.subtarget = bone
+        co.subtarget = sub_bone
         co.use_motion_extrapolate = True
 
         if driver and name != "X":
             influence_driver = co.driver_add("influence").driver
-            # DRIVER STUFF
             var = influence_driver.variables.new()
             var.name = "bone"
             var.type = 'TRANSFORMS'
             
             var.targets[0].id = armature
-            var.targets[0].bone_target = bone
+            var.targets[0].bone_target = sub_bone
             var.targets[0].transform_space = 'LOCAL_SPACE'
             var.targets[0].transform_type = trans_rot
             
@@ -1941,25 +2007,22 @@ def rig_character(
             var2.type = "SINGLE_PROP"
             
             var2.targets[0].id = armature
-            var2.targets[0].data_path = "pose.bones[\"plate-settings\"][\"Toggle Skirt Constraints\"]"
+            var2.targets[0].data_path = 'pose.bones["plate-settings"]["Toggle Skirt Constraints"]'
 
             influence_driver.type = 'SCRIPTED'
             influence_driver.expression = "(" + expression + ")*toggle" 
 
             depsgraph = bpy.context.evaluated_depsgraph_get()
             depsgraph.update()
-            # END DRIVER STUFF
             
-        # drivers for just the sides    
         elif driver and name == "X":
             influence_driver = co.driver_add("influence").driver
-            # DRIVER STUFF
             var2 = influence_driver.variables.new()
             var2.name = "toggle"
             var2.type = "SINGLE_PROP"
             
             var2.targets[0].id = armature
-            var2.targets[0].data_path = "pose.bones[\"plate-settings\"][\"Toggle Skirt Constraints\"]"
+            var2.targets[0].data_path = 'pose.bones["plate-settings"]["Toggle Skirt Constraints"]'
 
             influence_driver.type = 'SCRIPTED'
             influence_driver.expression = "toggle" 
@@ -1967,156 +2030,85 @@ def rig_character(
             depsgraph = bpy.context.evaluated_depsgraph_get()
             depsgraph.update()
             
-        co.target_space = "LOCAL"
+        co.target_space = "POSE"
         co.owner_space = "LOCAL"
         co.map_from = "ROTATION"
         co.map_to = "ROTATION"
         
-        # Do transform constraint math
-        # MAP FROM (put in t/e block?)
         co.from_min_x_rot = f_min_x
         co.from_max_x_rot = f_max_x
-        
         co.from_min_y_rot = f_min_y
         co.from_max_y_rot = f_max_y
-        
         co.from_min_z_rot = f_min_z
         co.from_max_z_rot = f_max_z
         
-        # MAP TO
         co.map_to_x_from = map_x
         co.to_min_x_rot = t_min_x
         co.to_max_x_rot = t_max_x
-        
         co.map_to_y_from = map_y
         co.to_min_y_rot = t_min_y
         co.to_max_y_rot = t_max_y
-        
         co.map_to_z_from = map_z
         co.to_min_z_rot = t_min_z
         co.to_max_z_rot = t_max_z
-        
-       
-    def add_leg_follow_const(bone_name, area):
-    # skirt_bone, name, bone, f_min_x=calc(-1), f_max_x=calc(1), f_min_y=0, f_max_y=0, f_min_z=0, f_max_z=0, map_x='X', map_y='Y', map_z='Z', t_min_x=0, t_max_x=0, t_min_y=0, t_max_y=0, t_min_z=0, t_max_y=0
 
-        # FRONT
-        if area == "FRONT":
-            # Front Center
-            if " CF " in bone_name:
-                if bone_name[-1] == "1":    
-                    add_const(bone_name, "Left Leg", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(-0.125), t_max_x=calc(0.125), t_min_y=calc(0.5), t_max_y=calc(-0.5), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Right Leg", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="Z", t_min_x=calc(-0.125), t_max_x=calc(0.125), t_min_y=calc(-0.5), t_max_y=calc(0.5), t_min_z=calc(0), t_max_z=calc(0))
-                
-                elif bone_name[-1] == "2": 
-                    add_const(bone_name, "Left Leg", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(0.125,True), t_max_x=calc(-0.125,True), t_min_y=calc(0.5,True), t_max_y=calc(-0.5,True), t_min_z=calc(-0.125,True), t_max_z=calc(0.125,True))
-                    add_const(bone_name, "Right Leg", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(0.125), t_max_x=calc(-0.125), t_min_y=calc(-0.5), t_max_y=calc(0.5), t_min_z=calc(0.125), t_max_z=calc(-0.125))
-              
-                elif bone_name[-1] == "3":                 
-                    add_const(bone_name, "Left Leg", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0.5,True), t_max_y=calc(-0.5,True), t_min_z=calc(0.125,True), t_max_z=calc(-0.125,True))
-                    add_const(bone_name, "Right Leg", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(-0.5,True), t_max_y=calc(0.5,True), t_min_z=calc(0), t_max_z=calc(0))
-             # Front Left
-            elif ".L" in bone_name:
-                if bone_name[-3] == "1":
-                    add_const(bone_name, "X+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.75,True), t_max_x=calc(0.75,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "X-", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.3,True), t_max_x=calc(0.3,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Z+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", f_min_x=0, f_max_x=0, f_min_z=calc(-1), f_max_z=calc(1), map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.1,True), t_max_z=calc(0.1,True))
+    def apply_skirt_chain_constraints(cat, chain):
+        b0 = chain[0]
+        b1 = chain[1] if len(chain) > 1 else None
+        b2 = chain[2] if len(chain) > 2 else None
 
-                elif bone_name[-3] == "2":
-                    add_const(bone_name, "Transformation", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="X", t_min_x=calc(0.25,True), t_max_x=calc(-0.25,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0.125,True), t_max_z=calc(0.0))
-                elif bone_name[-3] == "3":   
-                    add_const(bone_name, "Transformation", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0.25,True), t_max_x=calc(-0.25,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-            elif " L " in bone_name:
-                if bone_name[-1] == "1":
-                    add_const(bone_name, "X+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.75,True), t_max_x=calc(0.75,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "X-", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.3,True), t_max_x=calc(0.3,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Z+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", f_min_x=0, f_max_x=0, f_min_z=calc(-1), f_max_z=calc(1), map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.1,True), t_max_z=calc(0.1,True))
+        if cat == "FRONT_C":
+            add_const(b0, "Left Leg", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(-1.6, True), t_max_x=calc(1.6, True), t_min_y=calc(0.6, True), t_max_y=calc(-0.6, True), t_min_z=calc(0), t_max_z=calc(0))
+            add_const(b0, "Right Leg", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="Z", t_min_x=calc(-1.6, True), t_max_x=calc(1.6, True), t_min_y=calc(-0.6, True), t_max_y=calc(0.6, True), t_min_z=calc(0), t_max_z=calc(0))
+            if b1:
+                add_const(b1, "Left Leg", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(0.6,True), t_max_x=calc(-0.6,True), t_min_y=calc(0.6,True), t_max_y=calc(-0.6,True), t_min_z=calc(-0.2,True), t_max_z=calc(0.2,True))
+                add_const(b1, "Right Leg", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(0.6,True), t_max_x=calc(-0.6,True), t_min_y=calc(-0.6,True), t_max_y=calc(0.6,True), t_min_z=calc(0.2,True), t_max_z=calc(-0.2,True))
+            if b2:
+                add_const(b2, "Left Leg", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(0.4,True), t_max_x=calc(-0.4,True), t_min_y=calc(0.5,True), t_max_y=calc(-0.5,True), t_min_z=calc(0.2,True), t_max_z=calc(-0.2,True))
+                add_const(b2, "Right Leg", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="X", map_z="Z", t_min_x=calc(0.4,True), t_max_x=calc(-0.4,True), t_min_y=calc(-0.5,True), t_max_y=calc(0.5,True), t_min_z=calc(0), t_max_z=calc(0))
 
-                elif bone_name[-1] == "2":
-                    add_const(bone_name, "Transformation", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="X", t_min_x=calc(0.25,True), t_max_x=calc(-0.25,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0.125,True), t_max_z=calc(0.0))
-                elif bone_name[-1] == "3":   
-                    add_const(bone_name, "Transformation", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0.25,True), t_max_x=calc(-0.25,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+        elif cat == "FRONT_L":
+            add_const(b0, "X+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-1.75,True), t_max_x=calc(1.75,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+            add_const(b0, "X-", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.6,True), t_max_x=calc(0.6,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+            add_const(b0, "Z+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", f_min_x=0, f_max_x=0, f_min_z=calc(-1), f_max_z=calc(1), map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.2,True), t_max_z=calc(0.2,True))
+            if b1:
+                add_const(b1, "Transformation", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="X", t_min_x=calc(0.5,True), t_max_x=calc(-0.5,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0.25,True), t_max_z=calc(0.0))
+            if b2:
+                add_const(b2, "Transformation", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0.4,True), t_max_x=calc(-0.4,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
 
-            # Front Right
-            elif ".R" in bone_name:
-                if bone_name[-3] == "1":       
-                    add_const(bone_name, "X+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.75,True), t_max_x=calc(0.75,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "X-", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.3,True), t_max_x=calc(0.3,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Z+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z", f_min_x=0, f_max_x=0, f_min_z=calc(-1), f_max_z=calc(1), map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.1), t_max_z=calc(0.1,True))
-                elif bone_name[-3] == "2":       
-                    add_const(bone_name, "Transformation", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="X", t_min_x=calc(0.25,True), t_max_x=calc(-0.25,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.125,True), t_max_z=calc(0))
-                elif bone_name[-3] == "3":    
-                    add_const(bone_name, "Transformation", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0.25,True), t_max_x=calc(-0.25,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-            elif " R " in bone_name:
-                if bone_name[-1] == "1":       
-                    add_const(bone_name, "X+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.75,True), t_max_x=calc(0.75,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "X-", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.3,True), t_max_x=calc(0.3,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Z+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z", f_min_x=0, f_max_x=0, f_min_z=calc(-1), f_max_z=calc(1), map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.1), t_max_z=calc(0.1,True))
-                elif bone_name[-1] == "2":       
-                    add_const(bone_name, "Transformation", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="X", t_min_x=calc(0.25,True), t_max_x=calc(-0.25,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.125,True), t_max_z=calc(0))
-                elif bone_name[-1] == "3":    
-                    add_const(bone_name, "Transformation", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0.25,True), t_max_x=calc(-0.25,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-        
-         # SIDE
-        elif area == "SIDE": 
-            # Side Left
-            if ".L" in bone_name:
-                if bone_name[-3] == "1":
-                    add_const(bone_name, "X", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.15), t_max_x=calc(0.15), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Z+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z",f_min_x=0,f_max_x=0,f_min_z=calc(-1),f_max_z=calc(1),map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.2), t_max_z=calc(0.2))
-            
-            # Side Right
-            elif ".R" in bone_name:
-                if bone_name[-3] == "1":
-                    add_const(bone_name, "X", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.15), t_max_x=calc(0.15), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Z+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z",f_min_x=0,f_max_x=0,f_min_z=calc(-1),f_max_z=calc(1),map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.2), t_max_z=calc(0.2))
-            elif " L " in bone_name:
-                if bone_name[-1] == "1":
-                    add_const(bone_name, "X", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.15), t_max_x=calc(0.15), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Z+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z",f_min_x=0,f_max_x=0,f_min_z=calc(-1),f_max_z=calc(1),map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.2), t_max_z=calc(0.2))
-            
-            # Side Right
-            elif " R " in bone_name:
-                if bone_name[-1] == "1":
-                    add_const(bone_name, "X", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.15), t_max_x=calc(0.15), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Z+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z",f_min_x=0,f_max_x=0,f_min_z=calc(-1),f_max_z=calc(1),map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.2), t_max_z=calc(0.2))
-        
-        # BACK
-        elif area == "BACK":
-            # Back Left
-            if ".L" in bone_name:
-                if bone_name[-3] == "1":
-                    add_const(bone_name, "Transformation", "DEF-thigh.L", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.3), t_max_x=calc(0.3), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-            
-            # Back Right
-            if ".R" in bone_name:
-                if bone_name[-3] == "1":
-                    add_const(bone_name, "Transformation", "DEF-thigh.R", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.3), t_max_x=calc(0.3), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                    # Back Left
-            elif " L " in bone_name:
-                if bone_name[-1] == "1":
-                    add_const(bone_name, "Transformation", "DEF-thigh.L", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.3), t_max_x=calc(0.3), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-            
-            # Back Right
-            elif " R " in bone_name:
-                if bone_name[-1] == "1":
-                    add_const(bone_name, "Transformation", "DEF-thigh.R", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.3), t_max_x=calc(0.3), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
-                        
-            # Back Center
-            if " CB " in bone_name:
-                if bone_name[-1] == "1":
-                    add_const(bone_name, "Left Leg", "DEF-thigh.L", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(-0.125), t_max_x=calc(0.125), t_min_y=calc(0.5), t_max_y=calc(-0.5), t_min_z=calc(0), t_max_z=calc(0))
-                    add_const(bone_name, "Right Leg", "DEF-thigh.R", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="X", map_z="Z", t_min_x=calc(-0.125), t_max_x=calc(0.125), t_min_y=calc(-0.5), t_max_y=calc(0.5), t_min_z=calc(0), t_max_z=calc(0))
-        
-        
-    for bone in front_skirt_bones:
-        add_leg_follow_const(bone, "FRONT")
+        elif cat == "FRONT_R":
+            add_const(b0, "X+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-1.75,True), t_max_x=calc(1.75,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+            add_const(b0, "X-", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.6,True), t_max_x=calc(0.6,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+            add_const(b0, "Z+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z", f_min_x=0, f_max_x=0, f_min_z=calc(-1), f_max_z=calc(1), map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.2), t_max_z=calc(0.2,True))
+            if b1:
+                add_const(b1, "Transformation", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="X", t_min_x=calc(0.5,True), t_max_x=calc(-0.5,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.25,True), t_max_z=calc(0))
+            if b2:
+                add_const(b2, "Transformation", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0.4,True), t_max_x=calc(-0.4,True), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
 
-    for bone in side_skirt_bones:
-        add_leg_follow_const(bone, "SIDE")
+        elif cat == "SIDE_L":
+            add_const(b0, "X", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.4), t_max_x=calc(0.4), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+            add_const(b0, "Z+", "DEF-thigh.L", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z", f_min_x=0, f_max_x=0, f_min_z=calc(-1), f_max_z=calc(1), map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.3), t_max_z=calc(0.3))
 
-    for bone in back_skirt_bones:
-        add_leg_follow_const(bone, "BACK")
+        elif cat == "SIDE_R":
+            add_const(b0, "X", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.4), t_max_x=calc(0.4), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+            add_const(b0, "Z+", "DEF-thigh.R", "0.35 + 0.65 * max(0, min(1, (bone*-1)*3))", trans_rot="ROT_Z", f_min_x=0, f_max_x=0, f_min_z=calc(-1), f_max_z=calc(1), map_x="X", map_y="Y", map_z="Z", t_min_x=calc(0), t_max_x=calc(0), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(-0.3), t_max_z=calc(0.3))
+
+        elif cat == "BACK_L":
+            add_const(b0, "Transformation", "DEF-thigh.L", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.6), t_max_x=calc(0.6), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+
+        elif cat == "BACK_R":
+            add_const(b0, "Transformation", "DEF-thigh.R", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="Y", map_z="Z", t_min_x=calc(-0.6), t_max_x=calc(0.6), t_min_y=calc(0), t_max_y=calc(0), t_min_z=calc(0), t_max_z=calc(0))
+
+        elif cat == "BACK_C":
+            add_const(b0, "Left Leg", "DEF-thigh.L", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="X", map_z="X", t_min_x=calc(-0.35), t_max_x=calc(0.35), t_min_y=calc(0.5), t_max_y=calc(-0.5), t_min_z=calc(0), t_max_z=calc(0))
+            add_const(b0, "Right Leg", "DEF-thigh.R", "0.5 + 0.5 * max(0, min(1, (bone)*3))", map_x="X", map_y="X", map_z="Z", t_min_x=calc(-0.35), t_max_x=calc(0.35), t_min_y=calc(-0.5), t_max_y=calc(0.5), t_min_z=calc(0), t_max_z=calc(0))
+
+    for cat, chains in skirt_quadrant_chains.items():
+        for ch in chains:
+            try:
+                apply_skirt_chain_constraints(cat, ch)
+            except Exception as e_sk:
+                print(f"[ZZZ RIG Warning] Skirt constraint on {ch[0]} failed: {e_sk}")
 
     # Let's go into object mode and select the three face parts to begin adding shape key drivers
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -2343,7 +2335,7 @@ def rig_character(
     try:
         variablesScale = [
             {"var_name": "var", "var_type":"TRANSFORMS", "target": "Eye-Pupil-Control", "trans_space": "LOCAL_SPACE", "trans_type": "LOC_Y"},
-            {"var_name": "var2", "var_type":"SINGLE_PROP", "data_path": "pose.bones[\"plate-settings\"][\"EyeCorrection\"]"}
+            {"var_name": "var2", "var_type":"SINGLE_PROP", "data_path": 'pose.bones["plate-settings"]["EyeCorrection"]'}
         ]
 
         add_driver_to_bone_transform("+EyeBoneA02.R", "scale", 0, variablesScale, "1.5556 * var + 1")
@@ -2353,7 +2345,7 @@ def rig_character(
         # push back driver
         add_driver_to_bone_transform("+EyeBoneA02.R", "location", 1, [
             {"var_name": "var", "var_type":"TRANSFORMS", "target": "Wink-Control-R", "trans_space": "LOCAL_SPACE", "trans_type": "LOC_Y"},
-            {"var_name": "var2", "var_type":"SINGLE_PROP", "data_path": "pose.bones[\"plate-settings\"][\"EyeCorrection\"]"}
+            {"var_name": "var2", "var_type":"SINGLE_PROP", "data_path": 'pose.bones["plate-settings"]["EyeCorrection"]'}
         ],"(0.00273934 * var) * var2")
         _rig_log.append("OK: Pupil driver RIGHT eye created successfully")
     except Exception as e:
@@ -2368,74 +2360,85 @@ def rig_character(
         # push back driver
         add_driver_to_bone_transform("+EyeBoneA02.L", "location", 1, [
             {"var_name": "var", "var_type":"TRANSFORMS", "target": "Wink-Control-L", "trans_space": "LOCAL_SPACE", "trans_type": "LOC_Y"},
-            {"var_name": "var2", "var_type":"SINGLE_PROP", "data_path": "pose.bones[\"plate-settings\"][\"EyeCorrection\"]"}
+            {"var_name": "var2", "var_type":"SINGLE_PROP", "data_path": 'pose.bones["plate-settings"]["EyeCorrection"]'}
         ],"(0.00273934 * var) * var2")
         _rig_log.append("OK: Pupil driver LEFT eye created successfully")
     except Exception as e:
         _rig_log.append(f"FAIL: Pupil driver LEFT eye: {e}")
     
 
-    # Disable IK Stretching & Turn on IK Poles. Toggle manually as needed.
+    # Default limbs to IK mode (0.0) with zero stretch; controls stay native on limb gears (Genshin convention)
     rig_obj = bpy.data.objects.get(char_name + "Rig") or bpy.data.objects.get("rigify") or bpy.context.object
     if rig_obj and hasattr(rig_obj, "pose") and rig_obj.pose:
-        for b_name in ["thigh_parent.L", "thigh_parent.R"]:
-            if b_name in rig_obj.pose.bones:
-                rig_obj.pose.bones[b_name]["IK_Stretch"] = 0.0
-
-        for b_name in ["upper_arm_parent.L", "upper_arm_parent.R"]:
-            if b_name in rig_obj.pose.bones:
-                rig_obj.pose.bones[b_name]["IK_Stretch"] = 0.0
+        for b_name in ["thigh_parent.L", "thigh_parent.R", "upper_arm_parent.L", "upper_arm_parent.R"]:
+            pb = rig_obj.pose.bones.get(b_name)
+            if pb:
+                pb["IK_FK"] = 0.0
+                pb["IK_Stretch"] = 0.0
         
     if use_arm_ik_poles:
-        bpy.data.objects[char_name+"Rig"].pose.bones["upper_arm_parent.L"]["pole_vector"] = 1
-        bpy.data.objects[char_name+"Rig"].pose.bones["upper_arm_parent.R"]["pole_vector"] = 1
+        if "upper_arm_parent.L" in bpy.data.objects[char_name+"Rig"].pose.bones:
+            bpy.data.objects[char_name+"Rig"].pose.bones["upper_arm_parent.L"]["pole_vector"] = True
+        if "upper_arm_parent.R" in bpy.data.objects[char_name+"Rig"].pose.bones:
+            bpy.data.objects[char_name+"Rig"].pose.bones["upper_arm_parent.R"]["pole_vector"] = True
         
     if use_leg_ik_poles:
-        bpy.data.objects[char_name+"Rig"].pose.bones["thigh_parent.L"]["pole_vector"] = 1
-        bpy.data.objects[char_name+"Rig"].pose.bones["thigh_parent.R"]["pole_vector"] = 1
+        if "thigh_parent.L" in bpy.data.objects[char_name+"Rig"].pose.bones:
+            bpy.data.objects[char_name+"Rig"].pose.bones["thigh_parent.L"]["pole_vector"] = True
+        if "thigh_parent.R" in bpy.data.objects[char_name+"Rig"].pose.bones:
+            bpy.data.objects[char_name+"Rig"].pose.bones["thigh_parent.R"]["pole_vector"] = True
 
     if "torso" in bpy.data.objects[char_name+"Rig"].pose.bones:
         if "head_follow" in bpy.data.objects[char_name+"Rig"].pose.bones["torso"]:
             bpy.data.objects[char_name+"Rig"].pose.bones["torso"]["head_follow"] = 0.0
         if "neck_follow" in bpy.data.objects[char_name+"Rig"].pose.bones["torso"]:
-            bpy.data.objects[char_name+"Rig"].pose.bones["torso"]["neck_follow"] = 0.0
-    bpy.data.objects[char_name+"Rig"].pose.bones["upper_arm_parent.L"]["IK_parent"] = 4
-    bpy.data.objects[char_name+"Rig"].pose.bones["upper_arm_parent.R"]["IK_parent"] = 4
+            bpy.data.objects[char_name+"Rig"].pose.bones["torso"]["neck_follow"] = 0.5
+    if "upper_arm_parent.L" in bpy.data.objects[char_name+"Rig"].pose.bones:
+        bpy.data.objects[char_name+"Rig"].pose.bones["upper_arm_parent.L"]["IK_parent"] = 0
+    if "upper_arm_parent.R" in bpy.data.objects[char_name+"Rig"].pose.bones:
+        bpy.data.objects[char_name+"Rig"].pose.bones["upper_arm_parent.R"]["IK_parent"] = 0
 
     def add_shoulder_const(follow, driver, hand):
-        armature = bpy.context.scene.objects[ourRig]
+        armature = bpy.context.scene.objects.get(ourRig)
+        if not armature:
+            return
         
         # make shoulder follow driver bone
-        this_bone = bpy.context.scene.objects[char_name+"Rig"].pose.bones[follow]
+        this_bone = armature.pose.bones.get(follow)
+        if not this_bone:
+            return
         co = this_bone.constraints.new('DAMPED_TRACK')
         co.target = our_char
         co.subtarget = driver
         
         # make driver bone follow hand
-        drive = bpy.context.scene.objects[char_name+"Rig"].pose.bones[driver]
-        co2 = drive.constraints.new('COPY_LOCATION')
-        co2.target = our_char
-        co2.subtarget = hand
-        co2.target_space = "LOCAL_OWNER_ORIENT"
-        co2.owner_space = "LOCAL"
+        drive = armature.pose.bones.get(driver)
+        if drive:
+            co2 = drive.constraints.new('COPY_LOCATION')
+            co2.target = our_char
+            co2.subtarget = hand
+            co2.target_space = "LOCAL_OWNER_ORIENT"
+            co2.owner_space = "LOCAL"
         
-        # make driver to control influence
-        driver = co.driver_add("influence").driver
-        var = driver.variables.new()
+        # make driver to control influence (driven by PROPERTIES Toggle Shoulder Constraints)
+        influence_driver = co.driver_add("influence").driver
+        var = influence_driver.variables.new()
         var.name = "bone"
         var.type = 'SINGLE_PROP'
         
         var.targets[0].id = armature
-        var.targets[0].data_path = "pose.bones[\"plate-settings\"][\"Toggle Shoulder Constraints\"]"
-        driver.type = 'SCRIPTED'
-        driver.expression = "(bone * 0.4)"
+        var.targets[0].data_path = 'pose.bones["plate-settings"]["Toggle Shoulder Constraints"]'
+        influence_driver.type = 'SCRIPTED'
+        influence_driver.expression = "(bone * 0.4)"
         
         depsgraph = bpy.context.evaluated_depsgraph_get()
         depsgraph.update()
 
-    
-    add_shoulder_const("MCH-shoulder_follow.L","shoulder_driver.L","hand-ik-L")
-    add_shoulder_const("MCH-shoulder_follow.R","shoulder_driver.R","hand-ik-R")
+    wrist_L = "hand_ik_wrist.L" if "hand_ik_wrist.L" in bpy.context.scene.objects[ourRig].pose.bones else "hand-ik-L"
+    wrist_R = "hand_ik_wrist.R" if "hand_ik_wrist.R" in bpy.context.scene.objects[ourRig].pose.bones else "hand-ik-R"
+    if "MCH-shoulder_follow.L" in bpy.context.scene.objects[ourRig].pose.bones:
+        add_shoulder_const("MCH-shoulder_follow.L","shoulder_driver.L", wrist_L)
+        add_shoulder_const("MCH-shoulder_follow.R","shoulder_driver.R", wrist_R)
     
     def add_eye_bone_const(bone_name, to_bone):
         this_bone = bpy.context.scene.objects[char_name+"Rig"].pose.bones[bone_name]
@@ -2450,6 +2453,14 @@ def rig_character(
         final_eye_R_name = right_eye_bone_name if right_eye_bone_name else "+EyeBone R A01"
         add_eye_bone_const(final_eye_R_name, "+EyeBone R A01.001")
         add_eye_bone_const(final_eye_L_name, "+EyeBone L A01.001")
+
+        # Clean leftover constraints targeting deleted eyetrack bones
+        for eye_b in ["+EyeBone R A01.001", "+EyeBone L A01.001"]:
+            eb_pb = bpy.context.scene.objects[ourRig].pose.bones.get(eye_b)
+            if eb_pb:
+                for c in list(eb_pb.constraints):
+                    if getattr(c, "subtarget", None) in ["eyetrack", "eyetrack_L", "eyetrack_R"]:
+                        eb_pb.constraints.remove(c)
     except:
         pass
 
@@ -2483,12 +2494,13 @@ def rig_character(
     head_var.name = "bone"
     head_var.type = 'SINGLE_PROP'
     head_var.targets[0].id = bpy.context.scene.objects[ourRig]
-    head_var.targets[0].data_path = "pose.bones[\"plate-settings\"][\"Use Head Controller\"]"
+    head_var.targets[0].data_path = 'pose.bones["plate-settings"]["Use Head Controller"]'
     depsgraph = bpy.context.evaluated_depsgraph_get()
     depsgraph.update()
 
     if not use_head_tracker:
-        this_obj.pose.bones["plate-settings"]["Use Head Controller"] = 0.00
+        if "plate-settings" in this_obj.pose.bones:
+            this_obj.pose.bones["plate-settings"]["Use Head Controller"] = 0.00
  
     # This makes the controller follow the obj in the neck to keep it 'on' the head.
     head_pole_cont = bpy.context.scene.objects[char_name+"Rig"].pose.bones["head-controller"]
@@ -2504,9 +2516,18 @@ def rig_character(
     head_pole_var.name = "bone"
     head_pole_var.type = 'SINGLE_PROP'
     head_pole_var.targets[0].id = bpy.context.scene.objects[ourRig]
-    head_pole_var.targets[0].data_path = "pose.bones[\"plate-settings\"][\"Use Head Controller\"]"
+    head_pole_var.targets[0].data_path = 'pose.bones["plate-settings"]["Use Head Controller"]'
     depsgraph = bpy.context.evaluated_depsgraph_get()
     depsgraph.update()
+
+    # Set star custom shape on head-controller / head direction (Genshin primo-joint star style)
+    star_obj = bpy.data.objects.get("primo-joint") or bpy.data.objects.get("head-control-shape")
+    for h_name in ["head-controller", "Head Direction", "head direction", "Head_Direction"]:
+        pb_h = bpy.context.scene.objects[char_name+"Rig"].pose.bones.get(h_name)
+        if pb_h and star_obj:
+            pb_h.custom_shape = star_obj
+            pb_h.use_custom_shape_bone_size = False
+            pb_h.custom_shape_scale_xyz = (0.05, 0.05, 0.05)
 
     # We can now make our final bone groups look good! (Both 3.6 and 4.0 functionality.)
     def assign_bone_to_group(bone_name, group_name):
@@ -2881,13 +2902,8 @@ def rig_character(
         depsgraph = bpy.context.evaluated_depsgraph_get()
         depsgraph.update()
     
-    # Remove following on cog for head and neck so they follow the chest directly
-    for bone_name in ["MCH-ROT-head", "MCH-ROT-neck"]:
-        if bone_name in this_obj.pose.bones:
-            consts = this_obj.pose.bones[bone_name].constraints
-            for c in list(consts):
-                if c.type == 'COPY_ROTATION':
-                    consts.remove(c)
+    swap_const_follow_in_const("MCH-ROT-head", "COPY_ROTATION", 'pose.bones["plate-settings"]["Head Follow"]', target_bone="torso.002")
+    swap_const_follow_in_const("MCH-ROT-neck", "COPY_ROTATION", 'pose.bones["plate-settings"]["Neck Follow"]', target_bone="torso.002")
         
     # Delete all existing bone collections, and make new ones.   
     if is_version_4:
@@ -2982,7 +2998,7 @@ def rig_character(
         return "\n        if is_selected({'"+bone+"'}):\n            group1 = layout.row(align=True)\n            group2 = group1.split(factor=0.75, align=True)\n            props = group2.operator('pose.rigify_switch_parent_"+rig_char_id+"\', text=\'Parent Switch\', icon=\'DOWNARROW_HLT\')\n            props.bone = \'"+prop1+"\'\n            props.prop_bone = \'"+prop2+"\'\n            props.prop_id=\'IK_parent\'\n            props.parent_names = '[\"None\", \"root\", \"root.001\", \"root.002\", \"torso\", \"chest\"]'\n            props.locks = (False, False, False)\n            group2.prop(pose_bones['"+prop2+"'], '[\"IK_parent\"]', text='')\n            props = group1.operator('pose.rigify_switch_parent_bake_"+rig_char_id+"', text='', icon='ACTION_TWEAK')\n            props.bone = '"+prop1+"'\n            props.prop_bone='"+prop2+"'\n            props.prop_id='IK_parent'\n            props.parent_names='[\"None\", \"root\", \"root.001\", \"root.002\", \"torso\", \"chest\"]'\n            props.locks = (False, False, False)"
         
     def generate_string_for_settings_slider():
-        return '\n        if is_selected({"plate-settings"}):\n            layout.prop(pose_bones["plate-settings"], \'["Viewport Outlines"]\', text="Show Viewport Outlines", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["Use Head Controller"]\', text="Use Head Tracker Controller", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["Toggle Shoulder Constraints"]\', text="Auto Shoulder Constraints", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["Toggle Skirt Constraints"]\', text="Auto Skirt Constraints", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["EyeCorrection"]\', text="Adjust Pupil Wink Distance", slider=True)'
+        return '\n        if is_selected({"plate-settings"}):\n            layout.prop(pose_bones["plate-settings"], \'["Viewport Outlines"]\', text="Show Viewport Outlines", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["Use Head Controller"]\', text="Use Head Tracker Controller", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["Head Follow"]\', text="Head Follow", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["Neck Follow"]\', text="Neck Follow", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["Toggle Shoulder Constraints"]\', text="Auto Shoulder Constraints", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["Toggle Skirt Constraints"]\', text="Auto Skirt Constraints", slider=True)\n            layout.prop(pose_bones["plate-settings"], \'["EyeCorrection"]\', text="Adjust Pupil Wink Distance", slider=True)'
 
     def generate_string_for_head_controller_slider():
         return '\n        if is_selected({"head-controller"}):\n            layout.prop(pose_bones["plate-settings"], \'["Use Head Controller"]\', text="Use Head Tracker Controller", slider=True)\n        if is_selected({"head"}):\n            layout.prop(pose_bones["plate-settings"], \'["Use Head Controller"]\', text="Use Head Tracker Controller", slider=True)'
@@ -3157,13 +3173,10 @@ def rig_character(
     bone_to_layer("foot_ik_pivot.L", 19, "Pivots & Pins") 
     bone_to_layer("foot_ik_pivot.R", 19, "Pivots & Pins") 
     
-    # MOVING FACE (eye tracking bones remain; settings + head-controller hidden in _hidden)
-    if "_hidden" not in bpy.context.object.data.collections:
-        bpy.context.object.data.collections.new("_hidden")
-    bpy.context.object.data.collections["_hidden"].is_visible = False
-    bone_to_layer("plate-settings", 0, "_hidden")
+    # MOVING FACE (plate-settings, head-controller, eye tracking all in Face collection, matching Genshin)
+    bone_to_layer("plate-settings", 0, "Face")
+    bone_to_layer("head-controller", 0, "Face")
     bone_to_layer("eyetrack", 0, "Face")
-    bone_to_layer("head-controller", 0, "_hidden")
     bone_to_layer("eyetrack_L", 0, "Face")        
     bone_to_layer("eyetrack_R", 0, "Face")  
     bone_to_layer("Face-Root", 0, "Facerig Hooks")
@@ -3308,16 +3321,26 @@ def rig_character(
         bone_to_layer("eyetrack_R",25,"Other")
            
     # New bones, post append 
-    list_to_send_other = ["MCH-thigh_ik_target_sub.L","MCH-thigh_ik_target_sub.R","MCH-foot_ik_pivot.L","MCH-foot_ik_pivot.R","MCH-hand_ik_pivot.L","MCH-hand_ik_pivot.R","MCH-hand_ik_wrist.L","MCH-hand_ik_wrist.R","MCH-torso_pivot.002","shoulder_driver.R","shoulder_driver.L","MCH-shoulder_follow.R","MCH-shoulder_follow.L"]
+    list_to_send_other = [
+        "MCH-thigh_ik_target_sub.L", "MCH-thigh_ik_target_sub.R",
+        "MCH-foot_ik_pivot.L", "MCH-foot_ik_pivot.R",
+        "MCH-hand_ik_pivot.L", "MCH-hand_ik_pivot.R",
+        "MCH-hand_ik_wrist.L", "MCH-hand_ik_wrist.R",
+        "MCH-torso_pivot.002",
+        "MCH-Skirt_Calc_X.L", "MCH-Skirt_Calc_X.R",
+    ]
     
-    fast_bone_move(list_to_send_other,25,"Other")
+    fast_bone_move(list_to_send_other, 25, "Other")
     
     send_to_pivots = ["foot_ik_pivot.L","foot_ik_pivot.R","hand_ik_pivot.L","hand_ik_pivot.R","torso_pivot.002","forearm_tweak-pin.L","forearm_tweak-pin.R","shin_tweak-pin.L","shin_tweak-pin.R"]
     fast_bone_move(send_to_pivots, 19, "Pivots & Pins")
     
-    bone_to_layer("root.002", 28, "Root")
+    bone_to_layer("root", 28, "Root")
     bone_to_layer("root.001", 26, "Offsets")
-    bone_to_layer("root", 26, "Offsets")
+    bone_to_layer("root.002", 28, "Root")
+    assign_bone_to_group("root.002", "Root")
+    bone_to_layer("plate-settings", 0, "Face")
+    assign_bone_to_group("plate-settings", "Face")
     
     bone_to_layer("hand_ik.L",7,"Arm.L (IK)")
     bone_to_layer("hand_ik_wrist.L",26,"Offsets")

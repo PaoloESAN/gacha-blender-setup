@@ -268,11 +268,11 @@ class WW_PT_UI_Finish_Setup_Menu(Panel, WutheringWavesUIRenderChecker):
 
 class WW_PT_Rig_Character_Settings(Panel):
     bl_label = "Character Settings"
-    bl_idname = "WW_PT_Rig_Character_Settings"
+    bl_idname = "WW_PT_Rig_Character_Settings_Main"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "Item"
-    bl_order = 0
+    bl_order = 1
 
     @classmethod
     def poll(cls, context):

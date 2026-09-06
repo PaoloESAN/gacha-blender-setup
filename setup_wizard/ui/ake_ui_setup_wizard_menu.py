@@ -448,11 +448,11 @@ def update_ake_light_mode(self, context=None):
 
 class AKE_PT_Rig_Character_Settings(Panel):
     bl_label = "Character Settings"
-    bl_idname = "AKE_PT_Rig_Character_Settings"
+    bl_idname = "AKE_PT_Rig_Character_Settings_Main"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "Item"
-    bl_order = 0
+    bl_order = 1
 
     @classmethod
     def poll(cls, context):
