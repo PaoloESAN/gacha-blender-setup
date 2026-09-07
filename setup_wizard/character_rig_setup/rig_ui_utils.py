@@ -66,6 +66,7 @@ STANDARD_COLLECTION_NAMES = [
     "Tweaks",
     "Pivots & Pins",
     "Offsets",
+    "Weapon",
     "Props",
     "Face",
     "Torso (IK)",
@@ -91,7 +92,7 @@ STANDARD_COLLECTION_NAMES = [
 
 def setup_standard_bone_collections(armature_obj, is_version_4):
     """
-    Clears existing bone collections and initializes all standard 23 bone collections in Blender 4.0+.
+    Clears existing bone collections and initializes standard bone collections in Blender 4.0+.
     Sets initial visibility so main control collections are active, while helpers/FK/physics are hidden.
     """
     if not is_version_4:
@@ -108,7 +109,7 @@ def setup_standard_bone_collections(armature_obj, is_version_4):
     for name in STANDARD_COLLECTION_NAMES:
         collections.new(name)
 
-    # Initial visibility: Face, Torso (IK), Fingers, Arm.L/R (IK), Leg.L/R (IK), Root, Lighting visible
+    # Initial visibility: Face, Torso (IK), Fingers, Arm.L/R (IK), Leg.L/R (IK), Root, Lighting, Weapon visible
     visible_by_default = {
         "Face",
         "Torso (IK)",
@@ -119,6 +120,8 @@ def setup_standard_bone_collections(armature_obj, is_version_4):
         "Leg.R (IK)",
         "Root",
         "Lighting",
+        "Weapon",
+        "Props",
     }
 
     for name in STANDARD_COLLECTION_NAMES:
@@ -222,11 +225,21 @@ def distribute_standard_rig_bones(
         "foot_ik_sub.L", "foot_ik_sub.R",
     ], 26, "Offsets")
 
-    # 5. Props
+    # 5. Weapon & Props
+    fast_move(["prop.L", "prop.R"], 21, "Weapon")
     fast_move(["prop.L", "prop.R"], 21, "Props")
+    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "equip"]
     for b in arm_data.bones:
-        if "prop" in b.name.lower() and not b.name.startswith("DEF-") and not b.name.startswith("MCH-"):
-            b2c(b.name, 21, "Props")
+        b_name = b.name
+        b_low = b_name.lower()
+        if (
+            b_name in ["prop.L", "prop.R"]
+            or any(k in b_low for k in weapon_keywords)
+            or ("prop" in b_low and "parent" not in b_low)
+        ):
+            if not b_name.startswith("MCH-") and not b_name.startswith("ORG-"):
+                b2c(b_name, 21, "Weapon")
+                b2c(b_name, 21, "Props")
 
     # 6. Face
     fast_move([
@@ -401,10 +414,14 @@ def distribute_standard_rig_bones(
     # 23. Ensure all deform, mechanism, base, and helper bones strictly remain in Other & hidden
     for b in arm_data.bones:
         b_name = b.name
-        # If the bone has already been explicitly placed in an active collection (e.g. Hair, Clothes, Props, Face), do not demote to Other
+        # If the bone has already been explicitly placed in an active collection (e.g. Hair, Clothes, Weapon, Props, Face), do not demote to Other
         if is_version_4 and hasattr(b, "collections"):
             assigned_colls = {c.name for c in b.collections if c.name != "Other"}
             if assigned_colls:
+                continue
+        elif not is_version_4 and hasattr(b, "layers"):
+            active_layers = [i for i in range(32) if b.layers[i] and i != 25]
+            if active_layers:
                 continue
 
         if (
@@ -414,7 +431,7 @@ def distribute_standard_rig_bones(
             or b_name.startswith("Bon_")
             or b_name.startswith("BON_")
             or b_name.startswith("Bone-")
-            or b_name.startswith("Bip")
+            or (b_name.startswith("Bip") and not any(k in b_low for k in ["prop", "weapon"]))
             or b_name.startswith("joint_")
             or b_name.startswith("skn_")
             or "twist" in b_name.lower()
@@ -444,13 +461,29 @@ def build_rig_layers_ui_code(original_name, setup_version):
         solo_str = f"if '{text}' in collection: row.prop(collection['{text}'], 'is_solo', toggle=True, text='★')"
         return solo_str if title == "" else solo_str.replace("row.", f"row_{title}.")
 
+    def make_weapon_layer_str(vers, title=""):
+        if vers == 3:
+            return f"row.prop(context.active_object.data, 'layers', index=21, toggle=True, text='Weapon')"
+        r = f"row_{title}." if title else "row."
+        return (
+            f"if 'Weapon' in collection: {r}prop(collection['Weapon'], 'is_visible', toggle=True, text='Weapon')\n"
+            f"            elif 'Props' in collection: {r}prop(collection['Props'], 'is_visible', toggle=True, text='Weapon')"
+        )
+
+    def make_weapon_solo_str(title=""):
+        r = f"row_{title}." if title else "row."
+        return (
+            f"if 'Weapon' in collection: {r}prop(collection['Weapon'], 'is_solo', toggle=True, text='★')\n"
+            f"            elif 'Props' in collection: {r}prop(collection['Props'], 'is_solo', toggle=True, text='★')"
+        )
+
     def layers_to_generate(vers):
         if vers == 3:
             return (
                 "\n            row = col.row()\n            " + make_layer_str("Tweaks", 2, vers) +
                 "\n            row = col.row()\n            " + make_layer_str("Pivots & Pins", 19, vers) +
                 "\n            row = col.row()\n            " + make_layer_str("Offsets", 26, vers) +
-                "\n            row = col.row()\n            " + make_layer_str("Props", 21, vers) +
+                "\n            row = col.row()\n            " + make_weapon_layer_str(vers) +
                 "\n            row = col.row()\n            row.separator()" +
                 "\n            row = col.row()\n            row.separator()" +
                 "\n            row = col.row()\n            " + make_layer_str("Face", 0, vers) +
@@ -507,7 +540,7 @@ def build_rig_layers_ui_code(original_name, setup_version):
                 "\n            row_pivots = split.row(align=True)" +
                 "\n            " + make_solo_str("Pivots & Pins", "pivots") +
                 "\n            row = col.row()" +
-                # Offsets / Props
+                # Offsets / Weapon (Props)
                 "\n            split = row.split(factor=split_small, align=True)" +
                 "\n            row_tweaks = split.row(align=True)" +
                 "\n            " + make_layer_str("Offsets", 26, vers, "tweaks") +
@@ -515,10 +548,11 @@ def build_rig_layers_ui_code(original_name, setup_version):
                 "\n            " + make_solo_str("Offsets", "tweaks") +
                 "\n            split = row.split(factor=split_small, align=True)" +
                 "\n            row_pivots = split.row(align=True)" +
-                "\n            " + make_layer_str("Props", 21, vers, "pivots") +
+                "\n            " + make_weapon_layer_str(vers, "pivots") +
                 "\n            row_pivots = split.row(align=True)" +
-                "\n            " + make_solo_str("Props", "pivots") +
+                "\n            " + make_weapon_solo_str("pivots") +
                 # Spacers
+                "\n            row = col.row()" +
                 "\n            row = col.row()" +
                 "\n            row = col.row()" +
                 "\n            row = col.row()" +
@@ -844,30 +878,13 @@ def modify_and_run_rig_ui_script(
     if old_sel_block in complete_rig_text:
         complete_rig_text = complete_rig_text.replace(old_sel_block, new_sel_block)
 
-    target_after_is_selected = """        def is_selected(names):
-            # Returns whether any of the named bones are selected.
-            if isinstance(names, list) or isinstance(names, set):
-                return not selected_bones.isdisjoint(names)
-            elif names in selected_bones:
-                return True
-            return False"""
-
-    general_box_injection = target_after_is_selected + """
-
-        # General Settings (accessible even without clicking plate-settings)
-        if "plate-settings" in pose_bones and not is_selected({"plate-settings"}):
-            box = layout.box()
-            box.label(text="General Settings", icon='PREFERENCES')
-            box.prop(pose_bones["plate-settings"], '["Toggle Skirt Constraints"]', text="Auto Skirt Constraints", slider=True)
-            box.prop(pose_bones["plate-settings"], '["Toggle Shoulder Constraints"]', text="Auto Shoulder Constraints", slider=True)
-            box.prop(pose_bones["plate-settings"], '["Head Follow"]', text="Head Follow", slider=True)
-            box.prop(pose_bones["plate-settings"], '["Neck Follow"]', text="Neck Follow", slider=True)
-            box.prop(pose_bones["plate-settings"], '["Use Head Controller"]', text="Use Head Tracker Controller", slider=True)
-            box.prop(pose_bones["plate-settings"], '["EyeCorrection"]', text="Adjust Pupil Wink Distance", slider=True)
-            box.prop(pose_bones["plate-settings"], '["Viewport Outlines"]', text="Show Viewport Outlines", slider=True)"""
-
-    if target_after_is_selected in complete_rig_text and 'not is_selected({"plate-settings"})' not in complete_rig_text:
-        complete_rig_text = complete_rig_text.replace(target_after_is_selected, general_box_injection)
+    # Strip any persistent General Settings on non-selected bones so settings only appear when plate-settings is selected
+    complete_rig_text = re.sub(
+        r'^\s*# General Settings \(accessible even without clicking plate-settings\)\s*\n\s*if "plate-settings" in pose_bones and not is_selected\(\{"plate-settings"\}\):.*?(?=\n\s*(?:#|if\s+|def\s+|\Z))',
+        "",
+        complete_rig_text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
 
     # Blender 5.1+ compatibility fix: strip register_usetime_properties
     complete_rig_text = re.sub(

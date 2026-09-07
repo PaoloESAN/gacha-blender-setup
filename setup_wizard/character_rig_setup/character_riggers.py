@@ -598,6 +598,63 @@ class ZenlessZoneZeroCharacterRigger(CharacterRigger):
 
         join_extra_armatures(armature)
 
+        def cleanup_facerig_and_props_collections(body_rig):
+            if hasattr(body_rig.data, "collections"):
+                colls = body_rig.data.collections
+                face_coll = colls.get("Face") or colls.new("Face")
+                root_coll = colls.get("Root") or colls.new("Root")
+                other_coll = colls.get("Other") or colls.new("Other")
+                to_remove = []
+                for c in colls:
+                    c_low = c.name.lower()
+                    if "facerig" in c_low or "face hook" in c_low:
+                        for b in list(c.bones):
+                            if "hook" in b.name.lower():
+                                other_coll.assign(b)
+                            else:
+                                face_coll.assign(b)
+                        to_remove.append(c)
+                    elif c.name in ["Props", "props"]:
+                        w_coll = colls.get("Weapon") or colls.new("Weapon")
+                        for b in list(c.bones):
+                            w_coll.assign(b)
+                        to_remove.append(c)
+                    elif "weaponbox" in c_low:
+                        target_c = colls.get("Clothes") or colls.get("Other")
+                        if target_c:
+                            for b in list(c.bones):
+                                target_c.assign(b)
+                        to_remove.append(c)
+                for c in to_remove:
+                    try:
+                        colls.remove(c)
+                    except Exception:
+                        pass
+
+                # Move all hook bones (e.g. CTRL-Skn_L_highlights_hook) to Other and remove from Face
+                for b in body_rig.data.bones:
+                    if "hook" in b.name.lower():
+                        other_coll.assign(b)
+                        if face_coll:
+                            face_coll.unassign(b)
+
+                # Ensure all 3 root bones (root, root.001, root.002) are in Root collection
+                for r_name in ["root", "root.001", "root.002"]:
+                    rb = body_rig.data.bones.get(r_name)
+                    if rb:
+                        root_coll.assign(rb)
+                        if "Offsets" in colls:
+                            colls["Offsets"].unassign(rb)
+                        if other_coll:
+                            other_coll.unassign(rb)
+
+                face_coll.is_visible = True
+                root_coll.is_visible = True
+                if "Weapon" in colls:
+                    colls["Weapon"].is_visible = True
+
+        cleanup_facerig_and_props_collections(armature)
+
         def refresh_light_vectors_modifiers():
             char_name = armature.name.replace("Rig", "")
             for obj in bpy.data.objects:

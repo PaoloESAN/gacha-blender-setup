@@ -332,7 +332,74 @@ class HOYOVERSE_OT_apply_hair_dress_physics(Operator):
         return _apply_hair_clothes_physics_impl(self, context)
 
 
+class HOYOVERSE_OT_toggle_weapon_hand(Operator):
+    """Toggle weapon attached to hand or free in world"""
+    bl_idname = "hoyoverse.toggle_weapon_hand"
+    bl_label = "Poner en mano"
+    bl_description = "Alterna el arma entre sujeta a la mano (1.0) o libre en el espacio (0.0)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    side: StringProperty(name="Side", default="L")
+    prop_bone: StringProperty(name="Prop Bone", default="")
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'ARMATURE':
+            for o in getattr(context, "selected_objects", []):
+                if o.type == 'ARMATURE':
+                    obj = o
+                    break
+        if not obj or not hasattr(obj, "pose") or not obj.pose:
+            self.report({'WARNING'}, "Selecciona la armadura del personaje.")
+            return {'CANCELLED'}
+
+        if self.prop_bone:
+            prop_name = self.prop_bone
+            side_str = "R" if ".r" in self.prop_bone.lower() else "L"
+        else:
+            side_str = self.side.upper()
+            prop_name = f"prop.{side_str}"
+
+        pb = obj.pose.bones.get(prop_name)
+        if not pb:
+            self.report({'WARNING'}, f"Hueso {prop_name} no encontrado en el rig.")
+            return {'CANCELLED'}
+
+        curr_val = pb.get("Poner en mano", 1.0)
+        new_val = 0.0 if curr_val >= 0.5 else 1.0
+        pb["Poner en mano"] = new_val
+
+        # Update matching hand properties if present
+        for h_name in [f"hand_ik.{side_str}", f"hand_fk.{side_str}"]:
+            hpb = obj.pose.bones.get(h_name)
+            if hpb and "Poner en mano" in hpb:
+                hpb["Poner en mano"] = new_val
+
+        # Update constraint influence directly and set inverse_matrix to Identity so it snaps exactly to the hand
+        from mathutils import Matrix
+        for c in pb.constraints:
+            if c.type == 'CHILD_OF' and (c.name == "Poner en mano" or "hand" in (c.subtarget or "").lower()):
+                c.inverse_matrix = Matrix.Identity(4)
+                c.influence = new_val
+
+        pb.location = (0.0, 0.0, 0.0)
+        pb.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pb.rotation_euler = (0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+
+        try:
+            pb.id_properties_ui("Poner en mano").update(min=0.0, max=1.0, soft_min=0.0, soft_max=1.0)
+        except Exception:
+            pass
+
+        context.view_layer.update()
+        state = "en la mano" if new_val >= 0.5 else "libre"
+        self.report({'INFO'}, f"Arma {prop_name} {state} ({new_val:.1f}).")
+        return {'FINISHED'}
+
+
 # Compatibility aliases
 GI_OT_ApplyHairClothesPhysicsOperator = HOYOVERSE_OT_apply_hair_clothes_physics
 GI_OT_ApplyHairDressPhysicsOperator = HOYOVERSE_OT_apply_hair_dress_physics
+GI_OT_ToggleWeaponHand = HOYOVERSE_OT_toggle_weapon_hand
 

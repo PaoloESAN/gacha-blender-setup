@@ -618,6 +618,7 @@ class ZZZ_PT_Rig_Character_Settings(Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
+        obj = context.active_object or context.object
 
         # 1. Lighting Mode / Presets
         col_light = layout.column(align=True)
@@ -665,6 +666,8 @@ class ZZZ_PT_Rig_Character_Settings(Panel):
             col_physics.prop(scene, "gi_clothes_physics_influence", text="Clothes Physics", slider=True)
         else:
             col_physics.operator("hoyoverse.apply_hair_clothes_physics", text="Apply Physics", icon="FILE_REFRESH")
+
+
 
 
 def register_zzz_properties():

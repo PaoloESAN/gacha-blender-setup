@@ -22,7 +22,7 @@ SPACING_F    = 0.055
 WIDGET_F     = 1.0
 EYE_LOOK_FWD_F = 0.45
 SPINE_REF_Z = None
-FACERIG_COLLECTION = "Facerig"
+FACERIG_COLLECTION = "Face"
 RIGIFY_UI_ROW = 1
 
 EYE_HL_F     = 0.013
@@ -1171,18 +1171,20 @@ def setup_face_rig(mesh_obj, controls, armature, head_name, fwd, up, face_size):
             coll = armature.data.collections.get(c['collection'])
             if bone and coll:
                 coll.assign(bone)
+        other_c = armature.data.collections.get("Other") or armature.data.collections.new("Other")
+        face_c = armature.data.collections.get("Face")
         hook_names = [c['hook_name'] for c in controls if c.get('hook_name')]
-        if hook_names:
-            hc = armature.data.collections.get("Facerig Hooks")\
-                or armature.data.collections.new("Facerig Hooks")
-            try:
-                hc.is_visible = False
-            except Exception:
-                pass
-            for hn in hook_names:
-                bone = armature.data.bones.get(hn)
-                if bone:
-                    hc.assign(bone)
+        for hn in hook_names:
+            bone = armature.data.bones.get(hn)
+            if bone:
+                other_c.assign(bone)
+                if face_c:
+                    face_c.unassign(bone)
+        for b in armature.data.bones:
+            if "hook" in b.name.lower():
+                other_c.assign(b)
+                if face_c:
+                    face_c.unassign(b)
 
     wgt_coll = get_widget_collection()
     bpy.ops.object.mode_set(mode='POSE')
