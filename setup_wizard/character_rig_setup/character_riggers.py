@@ -767,6 +767,42 @@ class NevernessToEvernessCharacterRigger(CharacterRigger):
         except Exception as e:
             print(f"NTE face rig skipped/notice: {e}")
 
+        try:
+            from setup_wizard.replace_default_materials_setup.game_default_material_replacers import NevernessToEvernessDefaultMaterialReplacer
+            # Run the face SDF node fix
+            trees_to_check = set()
+            for ng in list(bpy.data.node_groups):
+                if ng and hasattr(ng, 'nodes'):
+                    trees_to_check.add(ng)
+            for mat in list(bpy.data.materials):
+                if mat and mat.use_nodes and mat.node_tree:
+                    trees_to_check.add(mat.node_tree)
+
+            for tree in trees_to_check:
+                ff_nodes = [
+                    n for n in tree.nodes
+                    if (n.type == 'GROUP' and n.node_tree and 'face factor' in n.node_tree.name.lower())
+                    or '面部因子' in getattr(n, 'label', '')
+                    or 'face factor' in n.name.lower()
+                ]
+                for ff in ff_nodes:
+                    for link in list(tree.links):
+                        if link.from_node == ff:
+                            target_node = link.to_node
+                            tree.links.remove(link)
+                            if target_node.type in ['MIX', 'MIX_RGB']:
+                                try:
+                                    if 'Factor' in target_node.inputs:
+                                        target_node.inputs['Factor'].default_value = 1.0
+                                    elif 'Fac' in target_node.inputs:
+                                        target_node.inputs['Fac'].default_value = 1.0
+                                    else:
+                                        target_node.inputs[0].default_value = 1.0
+                                except Exception:
+                                    pass
+        except Exception as e_sdf:
+            print(f"[NTE Face SDF Fix Notice] {e_sdf}")
+
         character_rigger_props: CharacterRiggerPropertyGroup = self.context.scene.character_rigger_props
         if getattr(character_rigger_props, "enable_hair_clothes_physics", False) or getattr(character_rigger_props, "enable_hair_dress_physics", False) or getattr(self.context.scene, "enable_hair_clothes_physics", False) or getattr(self.context.scene, "enable_hair_dress_physics", False):
             from setup_wizard.character_rig_setup.rig_ui_utils import apply_hair_and_clothes_physics, find_target_armature

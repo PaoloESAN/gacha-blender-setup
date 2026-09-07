@@ -246,11 +246,13 @@ def distribute_standard_rig_bones(
                 b2c(b_name, 21, "Props")
 
     if is_version_4:
-        for w_name in ["Weapon", "Props"]:
-            w_c = collections.get(w_name)
-            if w_c:
-                has_w = any(b.name not in ["prop.L", "prop.R"] for b in w_c.bones)
-                w_c.is_visible = has_w
+        arm_colls = getattr(arm_data, "collections", None)
+        if arm_colls:
+            for w_name in ["Weapon", "Props"]:
+                w_c = arm_colls.get(w_name)
+                if w_c:
+                    has_w = any(b.name not in ["prop.L", "prop.R"] for b in w_c.bones)
+                    w_c.is_visible = has_w
     else:
         has_w = any(b.name not in ["prop.L", "prop.R"] and b.layers[21] for b in arm_data.bones)
         arm_data.layers[21] = has_w
