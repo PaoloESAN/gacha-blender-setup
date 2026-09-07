@@ -3,7 +3,7 @@ import os
 bl_info = {
     "name": "Gacha Setup",
     "author": "Mken, OctavoPE, Enthralpy, PaoloESAN",
-    "version": (3, 5, 0),
+    "version": (3, 6, 0),
     "blender": (5, 2, 0),
     "location": "3D View > Sidebar > Genshin Impact / Honkai Star Rail / Zenless Zone Zero / Neverness to Everness / Wuthering Waves / Arknights: Endfield",
     "description": "An addon to streamline the character model setup process for Gacha games in Blender 5.2+",
@@ -92,8 +92,13 @@ else:
         register as register_genshin_setup_wizard,
     )
     from setup_wizard.set_up_head_driver import (
+        ZZZ_OT_SetUpHeadDriver,
         WW_OT_SetUpHeadDriver,
         AKE_OT_SetUpHeadDriver,
+    )
+    from setup_wizard.misc_operations import (
+        ZZZ_OT_RenameCollectionAndRig,
+        ZZZ_OT_MoveLightingPanelToCharacterCollection,
     )
     from setup_wizard.misc_final_steps import (
         GI_OT_FixTransformations,
@@ -279,6 +284,9 @@ else:
         ZZZ_OT_SetUpOutlines,
         ZZZ_OT_FinishSetup,
         ZZZ_OT_FixBoneChains,
+        ZZZ_OT_SetUpHeadDriver,
+        ZZZ_OT_RenameCollectionAndRig,
+        ZZZ_OT_MoveLightingPanelToCharacterCollection,
         NTE_PT_Setup_Wizard_UI_Layout,
         NTE_PT_Basic_Setup_Wizard_UI_Layout,
         NTE_PT_Advanced_Setup_Wizard_UI_Layout,
@@ -362,11 +370,17 @@ else:
                 pass
             except Exception as e:
                 print(f"[GACHA SETUP] Notice registering {cls}: {e}")
-        if hasattr(bpy.types, "VIEW3D_PT_context_properties"):
-            try:
-                bpy.types.VIEW3D_PT_context_properties.bl_order = 100
-            except Exception:
-                pass
+        for cls_name in dir(bpy.types):
+            if cls_name.startswith("VIEW3D_PT_"):
+                cls_prop = getattr(bpy.types, cls_name, None)
+                if cls_prop and getattr(cls_prop, "bl_category", "") == "Item" and getattr(cls_prop, "bl_label", "") in ["Properties", "Context Properties"]:
+                    try:
+                        bpy.utils.unregister_class(cls_prop)
+                        cls_prop.bl_order = 4
+                        cls_prop.bl_options = {'DEFAULT_CLOSED'}
+                        bpy.utils.register_class(cls_prop)
+                    except Exception:
+                        pass
         register_wuwa_properties()
         register_zzz_properties()
         register_hsr_properties()

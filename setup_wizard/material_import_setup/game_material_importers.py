@@ -595,6 +595,43 @@ class NevernessToEvernessMaterialImporterFacade(GameMaterialImporter):
             except Exception:
                 pass
 
+        def fix_nte_face_sdf_node():
+            trees_to_check = set()
+            for ng in list(bpy.data.node_groups):
+                if ng and hasattr(ng, 'nodes'):
+                    trees_to_check.add(ng)
+            for mat in list(bpy.data.materials):
+                if mat and mat.use_nodes and mat.node_tree:
+                    trees_to_check.add(mat.node_tree)
+
+            for tree in trees_to_check:
+                ff_nodes = [
+                    n for n in tree.nodes
+                    if (n.type == 'GROUP' and n.node_tree and 'face factor' in n.node_tree.name.lower())
+                    or '面部因子' in getattr(n, 'label', '')
+                    or 'face factor' in n.name.lower()
+                ]
+                for ff in ff_nodes:
+                    for link in list(tree.links):
+                        if link.from_node == ff:
+                            target_node = link.to_node
+                            tree.links.remove(link)
+                            if target_node.type in ['MIX', 'MIX_RGB']:
+                                try:
+                                    if 'Factor' in target_node.inputs:
+                                        target_node.inputs['Factor'].default_value = 1.0
+                                    elif 'Fac' in target_node.inputs:
+                                        target_node.inputs['Fac'].default_value = 1.0
+                                    else:
+                                        target_node.inputs[0].default_value = 1.0
+                                except Exception:
+                                    pass
+
+        try:
+            fix_nte_face_sdf_node()
+        except Exception as e_sdf:
+            print(f"[NTE Face SDF Fix Notice] {e_sdf}")
+
         project_root_directory_file_path = self.blender_operator.file_directory \
             or get_cache(cache_enabled).get(self.game_shader_folder_path) \
             or (os.path.dirname(self.blender_operator.filepath) if self.blender_operator.filepath else None)

@@ -66,6 +66,7 @@ STANDARD_COLLECTION_NAMES = [
     "Tweaks",
     "Pivots & Pins",
     "Offsets",
+    "Weapon",
     "Props",
     "Face",
     "Torso (IK)",
@@ -91,7 +92,7 @@ STANDARD_COLLECTION_NAMES = [
 
 def setup_standard_bone_collections(armature_obj, is_version_4):
     """
-    Clears existing bone collections and initializes all standard 23 bone collections in Blender 4.0+.
+    Clears existing bone collections and initializes standard bone collections in Blender 4.0+.
     Sets initial visibility so main control collections are active, while helpers/FK/physics are hidden.
     """
     if not is_version_4:
@@ -108,7 +109,7 @@ def setup_standard_bone_collections(armature_obj, is_version_4):
     for name in STANDARD_COLLECTION_NAMES:
         collections.new(name)
 
-    # Initial visibility: Face, Torso (IK), Fingers, Arm.L/R (IK), Leg.L/R (IK), Root, Lighting visible
+    # Initial visibility: Face, Torso (IK), Fingers, Arm.L/R (IK), Leg.L/R (IK), Root, Lighting visible (Weapon visible only if model has weapon)
     visible_by_default = {
         "Face",
         "Torso (IK)",
@@ -217,16 +218,44 @@ def distribute_standard_rig_bones(
 
     # 4. Offsets
     fast_move([
-        "root", "root.001", "torso.001", "torso.002",
+        "root.001", "torso.001", "torso.002",
         "hand_ik_wrist.L", "hand_ik_wrist.R",
         "foot_ik_sub.L", "foot_ik_sub.R",
     ], 26, "Offsets")
 
-    # 5. Props
+    # 5. Weapon & Props
+    fast_move(["prop.L", "prop.R"], 21, "Weapon")
     fast_move(["prop.L", "prop.R"], 21, "Props")
+    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "garape", "grape", "equip"]
     for b in arm_data.bones:
-        if "prop" in b.name.lower() and not b.name.startswith("DEF-") and not b.name.startswith("MCH-"):
-            b2c(b.name, 21, "Props")
+        b_name = b.name
+        b_low = b_name.lower()
+        if (
+            b_name in ["prop.L", "prop.R"]
+            or any(k in b_low for k in weapon_keywords)
+            or ("prop" in b_low and "parent" not in b_low)
+            or "_wpn_" in b_low
+            or "_weapon_" in b_low
+            or "_garape_" in b_low
+            or "_grape_" in b_low
+            or "garape" in b_low
+            or "grape" in b_low
+        ):
+            if not b_name.startswith("MCH-") and not b_name.startswith("ORG-"):
+                b2c(b_name, 21, "Weapon")
+                b2c(b_name, 21, "Props")
+
+    if is_version_4:
+        arm_colls = getattr(arm_data, "collections", None)
+        if arm_colls:
+            for w_name in ["Weapon", "Props"]:
+                w_c = arm_colls.get(w_name)
+                if w_c:
+                    has_w = any(b.name not in ["prop.L", "prop.R"] for b in w_c.bones)
+                    w_c.is_visible = has_w
+    else:
+        has_w = any(b.name not in ["prop.L", "prop.R"] and b.layers[21] for b in arm_data.bones)
+        arm_data.layers[21] = has_w
 
     # 6. Face
     fast_move([
@@ -342,10 +371,10 @@ def distribute_standard_rig_bones(
     fast_move(["thigh_fk.R", "shin_fk.R", "foot_fk.R", "toe_fk.R"], 17, "Leg.R (FK)")
 
     # 19. Root
-    b2c("root.002", 28, "Root")
+    b2c("root", 28, "Root")
     b2c("root_2", 28, "Root")
-    if "root.002" not in arm_data.bones and "root_2" not in arm_data.bones:
-        b2c("root", 28, "Root")
+    if "root.002" in arm_data.bones:
+        b2c("root.002", 28, "Root")
 
     # 20 & 21. Hair & Clothes & Breasts
     fast_move(["breast.L", "breast.R"], 3, "Torso (IK)")
@@ -401,10 +430,14 @@ def distribute_standard_rig_bones(
     # 23. Ensure all deform, mechanism, base, and helper bones strictly remain in Other & hidden
     for b in arm_data.bones:
         b_name = b.name
-        # If the bone has already been explicitly placed in an active collection (e.g. Hair, Clothes, Props, Face), do not demote to Other
+        # If the bone has already been explicitly placed in an active collection (e.g. Hair, Clothes, Weapon, Props, Face), do not demote to Other
         if is_version_4 and hasattr(b, "collections"):
             assigned_colls = {c.name for c in b.collections if c.name != "Other"}
             if assigned_colls:
+                continue
+        elif not is_version_4 and hasattr(b, "layers"):
+            active_layers = [i for i in range(32) if b.layers[i] and i != 25]
+            if active_layers:
                 continue
 
         if (
@@ -414,7 +447,7 @@ def distribute_standard_rig_bones(
             or b_name.startswith("Bon_")
             or b_name.startswith("BON_")
             or b_name.startswith("Bone-")
-            or b_name.startswith("Bip")
+            or (b_name.startswith("Bip") and not any(k in b_low for k in ["prop", "weapon"]))
             or b_name.startswith("joint_")
             or b_name.startswith("skn_")
             or "twist" in b_name.lower()
@@ -444,13 +477,29 @@ def build_rig_layers_ui_code(original_name, setup_version):
         solo_str = f"if '{text}' in collection: row.prop(collection['{text}'], 'is_solo', toggle=True, text='★')"
         return solo_str if title == "" else solo_str.replace("row.", f"row_{title}.")
 
+    def make_weapon_layer_str(vers, title=""):
+        if vers == 3:
+            return f"row.prop(context.active_object.data, 'layers', index=21, toggle=True, text='Weapon')"
+        r = f"row_{title}." if title else "row."
+        return (
+            f"if 'Weapon' in collection: {r}prop(collection['Weapon'], 'is_visible', toggle=True, text='Weapon')\n"
+            f"            elif 'Props' in collection: {r}prop(collection['Props'], 'is_visible', toggle=True, text='Weapon')"
+        )
+
+    def make_weapon_solo_str(title=""):
+        r = f"row_{title}." if title else "row."
+        return (
+            f"if 'Weapon' in collection: {r}prop(collection['Weapon'], 'is_solo', toggle=True, text='★')\n"
+            f"            elif 'Props' in collection: {r}prop(collection['Props'], 'is_solo', toggle=True, text='★')"
+        )
+
     def layers_to_generate(vers):
         if vers == 3:
             return (
                 "\n            row = col.row()\n            " + make_layer_str("Tweaks", 2, vers) +
                 "\n            row = col.row()\n            " + make_layer_str("Pivots & Pins", 19, vers) +
                 "\n            row = col.row()\n            " + make_layer_str("Offsets", 26, vers) +
-                "\n            row = col.row()\n            " + make_layer_str("Props", 21, vers) +
+                "\n            row = col.row()\n            " + make_weapon_layer_str(vers) +
                 "\n            row = col.row()\n            row.separator()" +
                 "\n            row = col.row()\n            row.separator()" +
                 "\n            row = col.row()\n            " + make_layer_str("Face", 0, vers) +
@@ -507,7 +556,7 @@ def build_rig_layers_ui_code(original_name, setup_version):
                 "\n            row_pivots = split.row(align=True)" +
                 "\n            " + make_solo_str("Pivots & Pins", "pivots") +
                 "\n            row = col.row()" +
-                # Offsets / Props
+                # Offsets / Weapon (Props)
                 "\n            split = row.split(factor=split_small, align=True)" +
                 "\n            row_tweaks = split.row(align=True)" +
                 "\n            " + make_layer_str("Offsets", 26, vers, "tweaks") +
@@ -515,10 +564,11 @@ def build_rig_layers_ui_code(original_name, setup_version):
                 "\n            " + make_solo_str("Offsets", "tweaks") +
                 "\n            split = row.split(factor=split_small, align=True)" +
                 "\n            row_pivots = split.row(align=True)" +
-                "\n            " + make_layer_str("Props", 21, vers, "pivots") +
+                "\n            " + make_weapon_layer_str(vers, "pivots") +
                 "\n            row_pivots = split.row(align=True)" +
-                "\n            " + make_solo_str("Props", "pivots") +
+                "\n            " + make_weapon_solo_str("pivots") +
                 # Spacers
+                "\n            row = col.row()" +
                 "\n            row = col.row()" +
                 "\n            row = col.row()" +
                 "\n            row = col.row()" +
@@ -787,21 +837,14 @@ def modify_and_run_rig_ui_script(
                 parts = complete_rig_text.split(divider)
                 complete_rig_text = parts[0] + divider + text + parts[1]
 
-    # Set Rig Layers header and order (order 1)
-    if 'bl_label = "Rig Layers"' in complete_rig_text:
-        complete_rig_text = complete_rig_text.replace(
-            'bl_label = "Rig Layers"',
-            'bl_label = "Rig Layers: " + rig_name\n    bl_order = 1'
-        )
-    elif 'bl_label = "Rig Layers: " + rig_name' in complete_rig_text and 'bl_order = 1' not in complete_rig_text:
-        complete_rig_text = complete_rig_text.replace(
-            'bl_label = "Rig Layers: " + rig_name',
-            'bl_label = "Rig Layers: " + rig_name\n    bl_order = 1'
-        )
-
-    # Set Rig Properties header, order (order 2), and collapse by default
+    # Set Rig Properties header and order (order 2) - COLLAPSED by default
     prop_replacement = 'bl_label = "Rig Properties: " + rig_name\n    bl_order = 2\n    bl_options = {\'DEFAULT_CLOSED\'}'
-    if 'bl_label = "Rig Main Properties"' in complete_rig_text:
+    if 'bl_label = "Rig Properties: " + rig_name\n    bl_order = 2' in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(
+            'bl_label = "Rig Properties: " + rig_name\n    bl_order = 2',
+            prop_replacement
+        )
+    elif 'bl_label = "Rig Main Properties"' in complete_rig_text:
         complete_rig_text = complete_rig_text.replace(
             'bl_label = "Rig Main Properties"',
             prop_replacement
@@ -811,11 +854,53 @@ def modify_and_run_rig_ui_script(
             'bl_label = "Properties"',
             prop_replacement
         )
-    elif 'bl_label = "Rig Properties: " + rig_name' in complete_rig_text and 'DEFAULT_CLOSED' not in complete_rig_text:
+    elif 'bl_label = "Rig Properties: " + rig_name' in complete_rig_text:
         complete_rig_text = complete_rig_text.replace(
             'bl_label = "Rig Properties: " + rig_name',
             prop_replacement
         )
+
+    # Set Rig Layers header and order (order 3) - COLLAPSED by default
+    layers_replacement = 'bl_label = "Rig Layers: " + rig_name\n    bl_order = 3\n    bl_options = {\'DEFAULT_CLOSED\'}'
+    if 'bl_label = "Rig Layers: " + rig_name\n    bl_order = 1' in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(
+            'bl_label = "Rig Layers: " + rig_name\n    bl_order = 1',
+            layers_replacement
+        )
+    elif 'bl_label = "Rig Layers"' in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(
+            'bl_label = "Rig Layers"',
+            layers_replacement
+        )
+    elif 'bl_label = "Rig Layers: " + rig_name' in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(
+            'bl_label = "Rig Layers: " + rig_name',
+            layers_replacement
+        )
+
+    # Safe selected_bones try-block and persistent General Settings box in RigUI.draw
+    old_sel_block = """        try:
+            selected_bones = set(bone.name for bone in context.selected_pose_bones)
+            selected_bones.add(context.active_pose_bone.name)
+        except (AttributeError, TypeError):
+            return"""
+
+    new_sel_block = """        selected_bones = set()
+        if getattr(context, "selected_pose_bones", None):
+            selected_bones.update(b.name for b in context.selected_pose_bones)
+        if getattr(context, "active_pose_bone", None):
+            selected_bones.add(context.active_pose_bone.name)"""
+
+    if old_sel_block in complete_rig_text:
+        complete_rig_text = complete_rig_text.replace(old_sel_block, new_sel_block)
+
+    # Strip any persistent General Settings on non-selected bones so settings only appear when plate-settings is selected
+    complete_rig_text = re.sub(
+        r'^\s*# General Settings \(accessible even without clicking plate-settings\)\s*\n\s*if "plate-settings" in pose_bones and not is_selected\(\{"plate-settings"\}\):.*?(?=\n\s*(?:#|if\s+|def\s+|\Z))',
+        "",
+        complete_rig_text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
 
     # Blender 5.1+ compatibility fix: strip register_usetime_properties
     complete_rig_text = re.sub(
@@ -830,6 +915,30 @@ def modify_and_run_rig_ui_script(
         complete_rig_text,
         flags=re.MULTILINE,
     )
+
+    # Order 4: Reorder Custom Properties panel to be last (order 4) and collapsed by default
+    properties_order_fix = """
+
+def _reorder_and_collapse_custom_properties():
+    import bpy
+    for cls_name in dir(bpy.types):
+        if cls_name.startswith("VIEW3D_PT_"):
+            cls = getattr(bpy.types, cls_name, None)
+            if cls and getattr(cls, "bl_category", "") == "Item" and getattr(cls, "bl_label", "") in ["Properties", "Context Properties"]:
+                try:
+                    bpy.utils.unregister_class(cls)
+                    cls.bl_order = 4
+                    cls.bl_options = {'DEFAULT_CLOSED'}
+                    bpy.utils.register_class(cls)
+                except Exception:
+                    pass
+
+try:
+    _reorder_and_collapse_custom_properties()
+except Exception:
+    pass
+"""
+    complete_rig_text += properties_order_fix
 
     # Write modified content
     rig_file.clear()
@@ -847,6 +956,20 @@ def modify_and_run_rig_ui_script(
         ctx["edit_text"] = rig_file
         with bpy.context.temp_override(edit_text=rig_file):
             bpy.ops.text.run_script()
+
+        # Enforce Properties panel order 4 and collapsed in active session
+        for cls_name in dir(bpy.types):
+            if cls_name.startswith("VIEW3D_PT_"):
+                cls = getattr(bpy.types, cls_name, None)
+                if cls and getattr(cls, "bl_category", "") == "Item" and getattr(cls, "bl_label", "") in ["Properties", "Context Properties"]:
+                    try:
+                        bpy.utils.unregister_class(cls)
+                        cls.bl_order = 4
+                        cls.bl_options = {'DEFAULT_CLOSED'}
+                        bpy.utils.register_class(cls)
+                    except Exception:
+                        pass
+
         print(f"[RIG UI] Successfully updated and executed UI script for '{clean_char_name}'")
         return True
     except Exception as ex:

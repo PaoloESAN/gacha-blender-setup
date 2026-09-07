@@ -501,9 +501,10 @@ class ZenlessZoneZeroCharacterRigger(CharacterRigger):
 
     def rig_character(self):
         cache_enabled = self.context.window_manager.cache_enabled
-        filepath = get_cache(cache_enabled).get(self.rigify_bone_shapes_file_path) or self.blender_operator.filepath
+        cached = get_cache(cache_enabled).get(self.rigify_bone_shapes_file_path)
+        filepath = cached if (cached and os.path.isfile(cached)) else (self.blender_operator.filepath if (self.blender_operator.filepath and os.path.isfile(self.blender_operator.filepath)) else None)
 
-        if not filepath:
+        if not filepath or not os.path.isfile(filepath):
             filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RootShape.blend')
 
         armature = _get_character_armature(self.context)
@@ -598,6 +599,92 @@ class ZenlessZoneZeroCharacterRigger(CharacterRigger):
 
         join_extra_armatures(armature)
 
+        def cleanup_facerig_and_props_collections(body_rig):
+            if hasattr(body_rig.data, "collections"):
+                colls = body_rig.data.collections
+                face_coll = colls.get("Face") or colls.new("Face")
+                root_coll = colls.get("Root") or colls.new("Root")
+                other_coll = colls.get("Other") or colls.new("Other")
+                to_remove = []
+                for c in colls:
+                    c_low = c.name.lower()
+                    if "facerig" in c_low or "face hook" in c_low:
+                        for b in list(c.bones):
+                            if "hook" in b.name.lower():
+                                other_coll.assign(b)
+                            else:
+                                face_coll.assign(b)
+                        to_remove.append(c)
+                    elif c.name in ["Props", "props"]:
+                        w_coll = colls.get("Weapon") or colls.new("Weapon")
+                        for b in list(c.bones):
+                            w_coll.assign(b)
+                        to_remove.append(c)
+                    elif "weaponbox" in c_low:
+                        target_c = colls.get("Clothes") or colls.get("Other")
+                        if target_c:
+                            for b in list(c.bones):
+                                target_c.assign(b)
+                        to_remove.append(c)
+                for c in to_remove:
+                    try:
+                        colls.remove(c)
+                    except Exception:
+                        pass
+
+                # Move all hook bones (e.g. CTRL-Skn_L_highlights_hook) to Other and remove from Face
+                for b in body_rig.data.bones:
+                    if "hook" in b.name.lower():
+                        other_coll.assign(b)
+                        if face_coll:
+                            face_coll.unassign(b)
+
+                # Ensure all 3 root bones (root, root.001, root.002) are in Root collection
+                for r_name in ["root", "root.001", "root.002"]:
+                    rb = body_rig.data.bones.get(r_name)
+                    if rb:
+                        root_coll.assign(rb)
+                        if "Offsets" in colls:
+                            colls["Offsets"].unassign(rb)
+                        if other_coll:
+                            other_coll.unassign(rb)
+
+                face_coll.is_visible = True
+                root_coll.is_visible = True
+                if "Weapon" in colls:
+                    actual_w_bones = [b for b in colls["Weapon"].bones if b.name not in ["prop.L", "prop.R"]]
+                    colls["Weapon"].is_visible = len(actual_w_bones) > 0
+
+        cleanup_facerig_and_props_collections(armature)
+
+        # Ensure all tail bones have the tweak custom shape (exclude IK bones)
+        tweak_shape = (
+            next((o for o in bpy.data.objects if o.type == 'MESH' and "tweak_spine" in o.name), None)
+            or next((o for o in bpy.data.objects if o.type == 'MESH' and "_tweak" in o.name), None)
+        )
+        if tweak_shape and hasattr(armature, "pose") and armature.pose:
+            for pb in armature.pose.bones:
+                if ("_tail_" in pb.name.lower() or "_tail" in pb.name.lower() or pb.name.lower().startswith("tail")) and "ik" not in pb.name.lower():
+                    pb.custom_shape = tweak_shape
+                    pb.use_custom_shape_bone_size = False
+                    pb.custom_shape_scale_xyz = (0.08, 0.08, 0.08)
+                    pb.rotation_mode = 'XYZ'
+
+        # Ensure tail_ik retains prop-wgt cube shape
+        prop_wgt = bpy.data.objects.get("prop-wgt")
+        if prop_wgt and hasattr(armature, "pose") and armature.pose:
+            for pb in armature.pose.bones:
+                if "tail_ik" in pb.name.lower():
+                    pb.custom_shape = prop_wgt
+                    pb.use_custom_shape_bone_size = False
+                    pb.custom_shape_scale_xyz = (0.35, 0.35, 0.35)
+                    pb.rotation_mode = 'XYZ'
+                    if hasattr(armature.data, "collections"):
+                        torso_c = armature.data.collections.get("Torso (IK)")
+                        b_ref = armature.data.bones.get(pb.name)
+                        if torso_c and b_ref:
+                            torso_c.assign(b_ref)
+
         def refresh_light_vectors_modifiers():
             char_name = armature.name.replace("Rig", "")
             for obj in bpy.data.objects:
@@ -679,6 +766,42 @@ class NevernessToEvernessCharacterRigger(CharacterRigger):
             nte_face_rig_main()
         except Exception as e:
             print(f"NTE face rig skipped/notice: {e}")
+
+        try:
+            from setup_wizard.replace_default_materials_setup.game_default_material_replacers import NevernessToEvernessDefaultMaterialReplacer
+            # Run the face SDF node fix
+            trees_to_check = set()
+            for ng in list(bpy.data.node_groups):
+                if ng and hasattr(ng, 'nodes'):
+                    trees_to_check.add(ng)
+            for mat in list(bpy.data.materials):
+                if mat and mat.use_nodes and mat.node_tree:
+                    trees_to_check.add(mat.node_tree)
+
+            for tree in trees_to_check:
+                ff_nodes = [
+                    n for n in tree.nodes
+                    if (n.type == 'GROUP' and n.node_tree and 'face factor' in n.node_tree.name.lower())
+                    or '面部因子' in getattr(n, 'label', '')
+                    or 'face factor' in n.name.lower()
+                ]
+                for ff in ff_nodes:
+                    for link in list(tree.links):
+                        if link.from_node == ff:
+                            target_node = link.to_node
+                            tree.links.remove(link)
+                            if target_node.type in ['MIX', 'MIX_RGB']:
+                                try:
+                                    if 'Factor' in target_node.inputs:
+                                        target_node.inputs['Factor'].default_value = 1.0
+                                    elif 'Fac' in target_node.inputs:
+                                        target_node.inputs['Fac'].default_value = 1.0
+                                    else:
+                                        target_node.inputs[0].default_value = 1.0
+                                except Exception:
+                                    pass
+        except Exception as e_sdf:
+            print(f"[NTE Face SDF Fix Notice] {e_sdf}")
 
         character_rigger_props: CharacterRiggerPropertyGroup = self.context.scene.character_rigger_props
         if getattr(character_rigger_props, "enable_hair_clothes_physics", False) or getattr(character_rigger_props, "enable_hair_dress_physics", False) or getattr(self.context.scene, "enable_hair_clothes_physics", False) or getattr(self.context.scene, "enable_hair_dress_physics", False):
