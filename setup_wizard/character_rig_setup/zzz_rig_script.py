@@ -1508,6 +1508,35 @@ def rig_character(
         if sb in armature.edit_bones:
             armature.edit_bones.remove(armature.edit_bones[sb])
 
+    # Chain sequential tail bones (e.g. Skn_Tail_01 -> 02 -> 03 ...)
+    # In raw game FBX, all tail bones are often flatly parented to spine/root,
+    # so rotating a parent tail bone did not rotate its children.
+    # We chain them hierarchically so rotating any parent bone rotates all child
+    # bones down the tail smoothly without kinks.
+    import re
+    tail_groups = {}
+    for eb in armature.edit_bones:
+        b_low = eb.name.lower()
+        if "tail" in b_low and not any(k in b_low for k in ["pendant", "hook", "mch-", "org-", "def-", "ctrl-", "ik"]):
+            m = re.match(r'^(.*?[_\-\.\s]?)(?:0*(\d+))$', eb.name)
+            if m:
+                pfx, num_str = m.group(1), m.group(2)
+                tail_groups.setdefault(pfx.lower(), []).append((int(num_str), eb.name))
+
+    for pfx, num_names in tail_groups.items():
+        if len(num_names) >= 2:
+            num_names.sort(key=lambda x: x[0])
+            for i in range(1, len(num_names)):
+                prev_name = num_names[i - 1][1]
+                curr_name = num_names[i][1]
+                prev_eb = armature.edit_bones.get(prev_name)
+                curr_eb = armature.edit_bones.get(curr_name)
+                if prev_eb and curr_eb:
+                    if curr_eb.parent != prev_eb:
+                        curr_eb.parent = prev_eb
+                        curr_eb.use_connect = False
+                        print(f"[TAIL CHAIN] Chained {curr_name} -> parent: {prev_name}")
+
     # Weapon / Prop bones setup in Edit Mode:
     # 1. Detect weapon bones (prop1, prop2, bip001 prop, weapon, equip, etc.)
     #    CRITICAL: EXCLUDE weaponbox or box (these are back/spine bones, NOT hand weapons)
@@ -1641,6 +1670,30 @@ def rig_character(
         eb_prop_r.inherit_scale = "FULL"
 
     detected_weapon_bone_names = [b.name for b in raw_weapon_bones]
+
+    # Tail IK bones setup in Edit Mode:
+    # Create IK controller bone at the tip of each tail chain, parented to root_master
+    tail_ik_info = []
+    for pfx, num_names in tail_groups.items():
+        if len(num_names) >= 1:
+            num_names.sort(key=lambda x: x[0])
+            last_name = num_names[-1][1]
+            last_eb = armature.edit_bones.get(last_name)
+            if last_eb:
+                ik_name = "tail_ik" if len(tail_groups) == 1 else f"tail_ik_{pfx.strip('_- ')}"
+                if ik_name in armature.edit_bones:
+                    ik_eb = armature.edit_bones[ik_name]
+                else:
+                    ik_eb = armature.edit_bones.new(ik_name)
+                ik_eb.head = last_eb.tail.copy()
+                dir_vec = (last_eb.tail - last_eb.head).normalized() if (last_eb.tail - last_eb.head).length > 1e-4 else Vector((0, 0, 1))
+                ik_eb.tail = last_eb.tail.copy() + dir_vec * max(last_eb.length * 2.0, 0.15)
+                ik_eb.roll = last_eb.roll
+                if root_master:
+                    ik_eb.parent = root_master
+                ik_eb.use_deform = False
+                tail_ik_info.append((ik_name, last_name, len(num_names)))
+                print(f"[TAIL IK] Created {ik_name} at tip of {last_name} with chain count {len(num_names)}")
 
     # Add Skirt calculation bones hierarchy parented to hips (Miyabi style: dual Locked Track per leg)
     hips_b = armature.edit_bones.get("hips") or armature.edit_bones.get("torso")
@@ -4167,17 +4220,74 @@ def rig_character(
 
     # MOVING OF BONES END -------------------------------    
 
-    # Assign tweak custom shape to all tail bones (_Tail_)
+    # Assign tweak custom shape to all tail bones (_Tail_) except IK bones
     tweak_shape = (
         next((o for o in bpy.data.objects if o.type == 'MESH' and "tweak_spine" in o.name), None)
         or next((o for o in bpy.data.objects if o.type == 'MESH' and "_tweak" in o.name), None)
     )
     if tweak_shape and this_obj and hasattr(this_obj, "pose") and this_obj.pose:
         for pb in this_obj.pose.bones:
-            if "_tail_" in pb.name.lower() or "_tail" in pb.name.lower() or pb.name.lower().startswith("tail"):
+            if ("_tail_" in pb.name.lower() or "_tail" in pb.name.lower() or pb.name.lower().startswith("tail")) and "ik" not in pb.name.lower():
                 pb.custom_shape = tweak_shape
                 pb.use_custom_shape_bone_size = False
                 pb.custom_shape_scale_xyz = (0.08, 0.08, 0.08)
+                pb.rotation_mode = 'XYZ'
+
+    # Configure Tail IK constraints, widgets, and controls
+    prop_wgt = bpy.data.objects.get("prop-wgt")
+    if this_obj and hasattr(this_obj, "pose") and this_obj.pose:
+        for ik_name, last_name, chain_len in tail_ik_info:
+            pb_last = this_obj.pose.bones.get(last_name)
+            pb_ik = this_obj.pose.bones.get(ik_name)
+            if pb_last and pb_ik:
+                # Add IK constraint to the last bone of the tail chain (active by default)
+                ik_c = pb_last.constraints.get("Tail_IK") or pb_last.constraints.new('IK')
+                ik_c.name = "Tail_IK"
+                ik_c.target = this_obj
+                ik_c.subtarget = ik_name
+                ik_c.chain_count = chain_len
+                ik_c.use_rotation = True
+                ik_c.influence = 1.0
+
+                # Configure tail_ik controller with prop cube widget
+                pb_ik.rotation_mode = 'XYZ'
+                if prop_wgt:
+                    pb_ik.custom_shape = prop_wgt
+                    pb_ik.use_custom_shape_bone_size = False
+                    pb_ik.custom_shape_scale_xyz = (0.35, 0.35, 0.35)
+
+                # Custom property for IK influence with driver (1.0 = IK, 0.0 = FK)
+                pb_ik["IK"] = 1.0
+                if "_RNA_UI" not in pb_ik:
+                    pb_ik["_RNA_UI"] = {}
+                pb_ik["_RNA_UI"]["IK"] = {
+                    "min": 0.0,
+                    "max": 1.0,
+                    "soft_min": 0.0,
+                    "soft_max": 1.0,
+                    "description": "Tail IK Influence (1.0 = IK, 0.0 = FK)",
+                    "default": 1.0,
+                }
+                try:
+                    ik_c.driver_remove("influence")
+                    drv = ik_c.driver_add("influence").driver
+                    drv.type = 'AVERAGE'
+                    var = drv.variables.new()
+                    var.name = "ik_val"
+                    var.type = 'SINGLE_PROP'
+                    target = var.targets[0]
+                    target.id_type = 'OBJECT'
+                    target.id = this_obj
+                    target.data_path = f'pose.bones["{ik_name}"]["IK"]'
+                except Exception as e:
+                    print(f"[TAIL IK DRIVER ERROR] {e}")
+
+                # Assign bone group and color (Torso theme, gold/yellow)
+                assign_bone_to_group(ik_name, "Torso")
+
+                # Place in collections: Torso (IK) (visible by default) and Clothes
+                bone_to_layer(ik_name, 3, "Torso (IK)", "Clothes")
+                print(f"[TAIL IK] Configured {ik_name} with prop cube widget and IK constraint on {last_name}")
 
     # Write rig log to Blender Text block (ALWAYS, so user can verify code ran)
     log_text = bpy.data.texts.get("RIG_LOG")
