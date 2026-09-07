@@ -656,6 +656,18 @@ class ZenlessZoneZeroCharacterRigger(CharacterRigger):
 
         cleanup_facerig_and_props_collections(armature)
 
+        # Ensure all tail bones have the tweak custom shape
+        tweak_shape = (
+            next((o for o in bpy.data.objects if o.type == 'MESH' and "tweak_spine" in o.name), None)
+            or next((o for o in bpy.data.objects if o.type == 'MESH' and "_tweak" in o.name), None)
+        )
+        if tweak_shape and hasattr(armature, "pose") and armature.pose:
+            for pb in armature.pose.bones:
+                if "_tail_" in pb.name.lower() or "_tail" in pb.name.lower() or pb.name.lower().startswith("tail"):
+                    pb.custom_shape = tweak_shape
+                    pb.use_custom_shape_bone_size = False
+                    pb.custom_shape_scale_xyz = (0.08, 0.08, 0.08)
+
         def refresh_light_vectors_modifiers():
             char_name = armature.name.replace("Rig", "")
             for obj in bpy.data.objects:

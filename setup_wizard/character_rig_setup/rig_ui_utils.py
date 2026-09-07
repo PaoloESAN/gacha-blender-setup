@@ -228,7 +228,7 @@ def distribute_standard_rig_bones(
     # 5. Weapon & Props
     fast_move(["prop.L", "prop.R"], 21, "Weapon")
     fast_move(["prop.L", "prop.R"], 21, "Props")
-    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "equip"]
+    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "wpn", "garape", "grape", "equip"]
     for b in arm_data.bones:
         b_name = b.name
         b_low = b_name.lower()
@@ -236,6 +236,12 @@ def distribute_standard_rig_bones(
             b_name in ["prop.L", "prop.R"]
             or any(k in b_low for k in weapon_keywords)
             or ("prop" in b_low and "parent" not in b_low)
+            or "_wpn_" in b_low
+            or "_weapon_" in b_low
+            or "_garape_" in b_low
+            or "_grape_" in b_low
+            or "garape" in b_low
+            or "grape" in b_low
         ):
             if not b_name.startswith("MCH-") and not b_name.startswith("ORG-"):
                 b2c(b_name, 21, "Weapon")

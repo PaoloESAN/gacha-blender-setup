@@ -1019,7 +1019,7 @@ def is_face_rig_bone(bone_name):
     if bone_name == "Face-Root":
         return True
     b_low = bone_name.lower()
-    if any(k in b_low for k in ("skirt", "hair", "dress", "cloth", "surfboard", "weapon", "spine", "arm", "leg", "hand", "foot", "torso", "root")):
+    if any(k in b_low for k in ("skirt", "hair", "dress", "cloth", "surfboard", "weapon", "wpn", "garape", "grape", "tail", "spine", "arm", "leg", "hand", "foot", "torso", "root")):
         return False
     if bone_name.startswith("CTRL-Ctr_"):
         return False
@@ -1598,7 +1598,7 @@ def zzz_face_rig_main():
             if obj.type != 'MESH':
                 continue
             n = obj.name.lower()
-            if any(ign in n for ign in ["weapon_", "gun_", "sword_"]):
+            if any(ign in n for ign in ["weapon_", "wpn_", "garape_", "grape_", "gun_", "sword_"]):
                 continue
             if "face" in n or "_face" in n or "head" in n:
                 if obj.data and obj.data.shape_keys is not None:

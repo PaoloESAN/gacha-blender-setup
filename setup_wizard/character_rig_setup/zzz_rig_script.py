@@ -1515,7 +1515,7 @@ def rig_character(
     # 3. Snap prop.L / prop.R to weapon root or hand
     # 4. Parent weapon roots to prop.L / prop.R
     # 5. Parent prop.L / prop.R to root
-    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "equip"]
+    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "wpn", "garape", "grape", "equip"]
     raw_weapon_bones = []
     for b in armature.edit_bones:
         b_low = b.name.lower()
@@ -1525,38 +1525,17 @@ def rig_character(
             continue
         if b.name.startswith("MCH-") or b.name.startswith("ORG-"):
             continue
-        if any(k in b_low for k in weapon_keywords) or ("prop" in b_low and "parent" not in b_low):
+        if (
+            any(k in b_low for k in weapon_keywords)
+            or ("prop" in b_low and "parent" not in b_low)
+            or "_wpn_" in b_low
+            or "_weapon_" in b_low
+            or "_garape_" in b_low
+            or "_grape_" in b_low
+            or "garape" in b_low
+            or "grape" in b_low
+        ):
             raw_weapon_bones.append(b)
-
-    weapon_bones_L = []
-    weapon_bones_R = []
-    for wb in raw_weapon_bones:
-        wb_low = wb.name.lower()
-        p_name = wb.parent.name.lower() if wb.parent else ""
-
-        is_left = (
-            "prop2" in wb_low or ".l" in wb_low or "_l" in wb_low or "left" in wb_low
-            or "hand.l" in p_name or "l hand" in p_name or ".l" in p_name or "_l" in p_name or "left" in p_name
-            or wb.head.x > 0.02
-        )
-        is_right = (
-            "prop1" in wb_low or ".r" in wb_low or "_r" in wb_low or "right" in wb_low
-            or "hand.r" in p_name or "r hand" in p_name or ".r" in p_name or "_r" in p_name or "right" in p_name
-            or wb.head.x < -0.02
-        )
-
-        if ("prop2" in wb_low or ".l" in wb_low or "hand.l" in p_name or "l hand" in p_name) and not ("prop1" in wb_low or ".r" in wb_low):
-            weapon_bones_L.append(wb)
-        elif ("prop1" in wb_low or ".r" in wb_low or "hand.r" in p_name or "r hand" in p_name) and not ("prop2" in wb_low or ".l" in wb_low):
-            weapon_bones_R.append(wb)
-        elif is_left and not is_right:
-            weapon_bones_L.append(wb)
-        elif is_right and not is_left:
-            weapon_bones_R.append(wb)
-        elif wb.head.x >= 0:
-            weapon_bones_L.append(wb)
-        else:
-            weapon_bones_R.append(wb)
 
     def get_weapon_roots(b_list):
         roots = []
@@ -1565,8 +1544,37 @@ def rig_character(
                 roots.append(b)
         return roots
 
-    roots_L = get_weapon_roots(weapon_bones_L)
-    roots_R = get_weapon_roots(weapon_bones_R)
+    all_roots = get_weapon_roots(raw_weapon_bones)
+
+    roots_L = []
+    roots_R = []
+    for r in all_roots:
+        r_low = r.name.lower()
+        p_name = r.parent.name.lower() if r.parent else ""
+
+        is_left = (
+            "prop2" in r_low or ".l" in r_low or "_l" in r_low or "left" in r_low
+            or "hand.l" in p_name or "l hand" in p_name or ".l" in p_name or "_l" in p_name or "left" in p_name
+            or r.head.x > 0.02
+        )
+        is_right = (
+            "prop1" in r_low or ".r" in r_low or "_r" in r_low or "right" in r_low
+            or "hand.r" in p_name or "r hand" in p_name or ".r" in p_name or "_r" in p_name or "right" in p_name
+            or r.head.x < -0.02
+        )
+
+        if ("prop2" in r_low or ".l" in r_low or "hand.l" in p_name or "l hand" in p_name) and not ("prop1" in r_low or ".r" in r_low):
+            roots_L.append(r)
+        elif ("prop1" in r_low or ".r" in r_low or "hand.r" in p_name or "r hand" in p_name) and not ("prop2" in r_low or ".l" in r_low):
+            roots_R.append(r)
+        elif is_left and not is_right:
+            roots_L.append(r)
+        elif is_right and not is_left:
+            roots_R.append(r)
+        elif r.head.x >= 0:
+            roots_L.append(r)
+        else:
+            roots_R.append(r)
 
     # Master root bone to parent props to - prioritize root (renamed to root.002) so weapons follow root.002
     root_master = (
@@ -3273,7 +3281,8 @@ def rig_character(
             for wb_name in detected_weapon_bone_names:
                 w_eb = this_obj.data.edit_bones.get(wb_name)
                 if w_eb and (w_eb.parent is None or w_eb.parent.name in ["root", "root.001"]):
-                    eb_p = this_obj.data.edit_bones.get("prop.L" if ".l" in wb_name.lower() else "prop.R")
+                    is_l = ".l" in wb_name.lower() or "garape" in wb_name.lower() or "grape" in wb_name.lower()
+                    eb_p = this_obj.data.edit_bones.get("prop.L" if is_l else "prop.R")
                     w_eb.parent = eb_p if eb_p else eb_r002
         bpy.ops.object.mode_set(mode='POSE')
     except Exception as e_parent_props:
@@ -3963,7 +3972,7 @@ def rig_character(
         b_low = b.name.lower()
         if "box" in b_low or "weaponbox" in b_low:
             continue
-        if any(k in b_low for k in ["prop1", "prop2", "weapon", "equip"]):
+        if any(k in b_low for k in ["prop1", "prop2", "weapon", "wpn", "garape", "grape", "equip"]) or "_wpn_" in b_low or "_weapon_" in b_low or "_garape_" in b_low or "_grape_" in b_low or "garape" in b_low or "grape" in b_low:
             bone_to_layer(b.name, 21, "Weapon")
 
     # Ensure all face bones (slider-, frame-, eyetrack, plate-, Face-, Wink, etc.) are in Face (excluding plate-settings which is Root)
@@ -4157,6 +4166,18 @@ def rig_character(
             colls["Weapon"].is_visible = True
 
     # MOVING OF BONES END -------------------------------    
+
+    # Assign tweak custom shape to all tail bones (_Tail_)
+    tweak_shape = (
+        next((o for o in bpy.data.objects if o.type == 'MESH' and "tweak_spine" in o.name), None)
+        or next((o for o in bpy.data.objects if o.type == 'MESH' and "_tweak" in o.name), None)
+    )
+    if tweak_shape and this_obj and hasattr(this_obj, "pose") and this_obj.pose:
+        for pb in this_obj.pose.bones:
+            if "_tail_" in pb.name.lower() or "_tail" in pb.name.lower() or pb.name.lower().startswith("tail"):
+                pb.custom_shape = tweak_shape
+                pb.use_custom_shape_bone_size = False
+                pb.custom_shape_scale_xyz = (0.08, 0.08, 0.08)
 
     # Write rig log to Blender Text block (ALWAYS, so user can verify code ran)
     log_text = bpy.data.texts.get("RIG_LOG")
