@@ -815,11 +815,20 @@ def rig_character(
                 if orig_b:
                     orig_b.roll = b_meta.roll
 
+    thumb_miyabi_rolls = {
+        "thumb.01.L": 2.3441737,
+        "thumb.02.L": 2.1639006,
+        "thumb.03.L": 2.0797312,
+        "thumb.01.R": -2.3441737,
+        "thumb.02.R": -2.1639006,
+        "thumb.03.R": -2.0797312,
+    }
     for bone in metarm.edit_bones:
-        if "thumb" in bone.name:
+        if bone.name in thumb_miyabi_rolls:
+            bone.roll = thumb_miyabi_rolls[bone.name]
             orig_b = armature.edit_bones.get(bone.name) or armature.edit_bones.get("DEF-" + bone.name)
             if orig_b:
-                bone.roll = orig_b.roll
+                orig_b.roll = thumb_miyabi_rolls[bone.name]
 
     # Fix hand bones being rotated 90 degrees sideways and arm deformation bones being wonky
     if "Loli" in obj.name:
@@ -1058,17 +1067,91 @@ def rig_character(
             except:
                 pass
 
-    # Apply exact requested Quaternion rotation to thumb.01_master controls
-    bpy.ops.object.mode_set(mode='POSE')
-    if "thumb.01_master.L" in rig.pose.bones:
-        pb_l = rig.pose.bones["thumb.01_master.L"]
-        pb_l.rotation_mode = 'QUATERNION'
-        pb_l.rotation_quaternion = (0.915334, 0.0, 0.402697, 0.0)
+    # Setup thumb scaling rotation system exactly like miyabi.blend
+    bpy.ops.object.mode_set(mode='EDIT')
+    for side, sign in [(".L", 1.0), (".R", -1.0)]:
+        rolls = {
+            f"thumb.01{side}": 2.3441737 * sign,
+            f"thumb.02{side}": 2.1639006 * sign,
+            f"thumb.03{side}": 2.0797312 * sign,
+            f"thumb.01_master{side}": 2.3441737 * sign,
+            f"DEF-thumb.01{side}": 2.3441737 * sign,
+            f"DEF-thumb.02{side}": 2.1639006 * sign,
+            f"DEF-thumb.03{side}": 2.0797312 * sign,
+            f"MCH-thumb.01_drv{side}": 2.3441737 * sign,
+            f"MCH-thumb.02_drv{side}": 2.1639006 * sign,
+            f"MCH-thumb.03_drv{side}": 2.0797312 * sign,
+            f"ORG-thumb.01{side}": 2.3441737 * sign,
+            f"ORG-thumb.02{side}": 2.1639006 * sign,
+            f"ORG-thumb.03{side}": 2.0797312 * sign,
+        }
+        for b_name, r in rolls.items():
+            eb = rig.data.edit_bones.get(b_name)
+            if eb:
+                eb.roll = r
 
-    if "thumb.01_master.R" in rig.pose.bones:
-        pb_r = rig.pose.bones["thumb.01_master.R"]
-        pb_r.rotation_mode = 'QUATERNION'
-        pb_r.rotation_quaternion = (0.915334, 0.0, -0.402697, 0.0)
+    bpy.ops.object.mode_set(mode='POSE')
+    if rig.animation_data and rig.animation_data.drivers:
+        drivers_to_remove = [
+            d for d in rig.animation_data.drivers
+            if 'thumb.02_drv' in d.data_path or 'thumb.03_drv' in d.data_path
+        ]
+        for d in drivers_to_remove:
+            rig.animation_data.drivers.remove(d)
+
+    for side in [".L", ".R"]:
+        master_name = "thumb.01_master" + side
+        pb_master = rig.pose.bones.get(master_name)
+        if pb_master:
+            pb_master.rotation_mode = 'QUATERNION'
+            pb_master.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+            pb_master.lock_scale[0] = False
+            pb_master.lock_scale[1] = False
+            pb_master.lock_scale[2] = False
+
+        # Segment 02 (middle): rotation on X driven by Y scale (Miyabi system)
+        b02 = rig.pose.bones.get("MCH-thumb.02_drv" + side)
+        if b02:
+            for c in list(b02.constraints):
+                if c.name == "Transformation" or c.type == 'TRANSFORM':
+                    b02.constraints.remove(c)
+            c2 = b02.constraints.new('TRANSFORM')
+            c2.name = "Transformation"
+            c2.target = rig
+            c2.subtarget = master_name
+            c2.map_from = 'SCALE'
+            c2.map_to = 'ROTATION'
+            c2.from_min_y_scale = 0.6
+            c2.from_max_y_scale = 1.0
+            c2.to_min_x_rot = -pi / 2
+            c2.to_max_x_rot = 0.0
+            c2.map_to_x_from = 'Y'
+            c2.mix_mode_rot = 'ADD'
+            c2.target_space = 'LOCAL'
+            c2.owner_space = 'LOCAL'
+            c2.use_motion_extrapolate = True
+
+        # Segment 03 (tip): rotation on X driven by X scale (Miyabi system)
+        b03 = rig.pose.bones.get("MCH-thumb.03_drv" + side)
+        if b03:
+            for c in list(b03.constraints):
+                if c.name == "Transformation" or c.type == 'TRANSFORM':
+                    b03.constraints.remove(c)
+            c3 = b03.constraints.new('TRANSFORM')
+            c3.name = "Transformation"
+            c3.target = rig
+            c3.subtarget = master_name
+            c3.map_from = 'SCALE'
+            c3.map_to = 'ROTATION'
+            c3.from_min_x_scale = 0.7
+            c3.from_max_x_scale = 1.0
+            c3.to_min_x_rot = -pi / 2
+            c3.to_max_x_rot = 0.0
+            c3.map_to_x_from = 'X'
+            c3.mix_mode_rot = 'ADD'
+            c3.target_space = 'LOCAL'
+            c3.owner_space = 'LOCAL'
+            c3.use_motion_extrapolate = True
 
     # Fix face shading being offset 90 degrees
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -1584,7 +1667,7 @@ def rig_character(
     # 3. Snap prop.L / prop.R to weapon root or hand
     # 4. Parent weapon roots to prop.L / prop.R
     # 5. Parent prop.L / prop.R to root
-    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "wpn", "garape", "grape", "equip"]
+    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "garape", "grape", "equip"]
     raw_weapon_bones = []
     for b in armature.edit_bones:
         b_low = b.name.lower()
@@ -3732,7 +3815,7 @@ def rig_character(
         bpy.context.object.data.layers[16] = True
         bpy.context.object.data.layers[17] = False
         bpy.context.object.data.layers[20] = False
-        bpy.context.object.data.layers[21] = True
+        bpy.context.object.data.layers[21] = False
         bpy.context.object.data.layers[22] = False
         bpy.context.object.data.layers[28] = True
         bpy.context.object.data.layers[26] = False
@@ -3740,7 +3823,7 @@ def rig_character(
         if "Props" in bpy.context.object.data.collections:
             bpy.context.object.data.collections["Props"].is_visible = False
         if "Weapon" in bpy.context.object.data.collections:
-            bpy.context.object.data.collections["Weapon"].is_visible = True
+            bpy.context.object.data.collections["Weapon"].is_visible = False
         if "Face" in bpy.context.object.data.collections:
             bpy.context.object.data.collections["Face"].is_visible = True
         bpy.context.object.data.collections["Pivots & Pins"].is_visible = False
@@ -4063,7 +4146,7 @@ def rig_character(
         b_low = b.name.lower()
         if "box" in b_low or "weaponbox" in b_low:
             continue
-        if any(k in b_low for k in ["prop1", "prop2", "weapon", "wpn", "garape", "grape", "equip"]) or "_wpn_" in b_low or "_weapon_" in b_low or "_garape_" in b_low or "_grape_" in b_low or "garape" in b_low or "grape" in b_low:
+        if any(k in b_low for k in ["prop1", "prop2", "weapon", "garape", "grape", "equip"]) or "_wpn_" in b_low or "_weapon_" in b_low or "_garape_" in b_low or "_grape_" in b_low or "garape" in b_low or "grape" in b_low:
             bone_to_layer(b.name, 21, "Weapon")
 
     # Ensure all face bones (slider-, frame-, eyetrack, plate-, Face-, Wink, etc.) are in Face (excluding plate-settings which is Root)
@@ -4254,7 +4337,11 @@ def rig_character(
         face_coll.is_visible = True
         root_coll.is_visible = True
         if "Weapon" in colls:
-            colls["Weapon"].is_visible = True
+            actual_w_bones = [b for b in colls["Weapon"].bones if b.name not in ["prop.L", "prop.R"]]
+            colls["Weapon"].is_visible = len(actual_w_bones) > 0
+    else:
+        actual_w_bones = [b for b in this_obj.data.bones if b.layers[21] and b.name not in ["prop.L", "prop.R"]]
+        this_obj.data.layers[21] = len(actual_w_bones) > 0
 
     # MOVING OF BONES END -------------------------------    
 

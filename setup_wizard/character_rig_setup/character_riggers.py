@@ -652,7 +652,8 @@ class ZenlessZoneZeroCharacterRigger(CharacterRigger):
                 face_coll.is_visible = True
                 root_coll.is_visible = True
                 if "Weapon" in colls:
-                    colls["Weapon"].is_visible = True
+                    actual_w_bones = [b for b in colls["Weapon"].bones if b.name not in ["prop.L", "prop.R"]]
+                    colls["Weapon"].is_visible = len(actual_w_bones) > 0
 
         cleanup_facerig_and_props_collections(armature)
 

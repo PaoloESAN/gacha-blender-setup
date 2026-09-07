@@ -109,7 +109,7 @@ def setup_standard_bone_collections(armature_obj, is_version_4):
     for name in STANDARD_COLLECTION_NAMES:
         collections.new(name)
 
-    # Initial visibility: Face, Torso (IK), Fingers, Arm.L/R (IK), Leg.L/R (IK), Root, Lighting, Weapon visible
+    # Initial visibility: Face, Torso (IK), Fingers, Arm.L/R (IK), Leg.L/R (IK), Root, Lighting visible (Weapon visible only if model has weapon)
     visible_by_default = {
         "Face",
         "Torso (IK)",
@@ -120,8 +120,6 @@ def setup_standard_bone_collections(armature_obj, is_version_4):
         "Leg.R (IK)",
         "Root",
         "Lighting",
-        "Weapon",
-        "Props",
     }
 
     for name in STANDARD_COLLECTION_NAMES:
@@ -228,7 +226,7 @@ def distribute_standard_rig_bones(
     # 5. Weapon & Props
     fast_move(["prop.L", "prop.R"], 21, "Weapon")
     fast_move(["prop.L", "prop.R"], 21, "Props")
-    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "wpn", "garape", "grape", "equip"]
+    weapon_keywords = ["prop1", "prop2", "bip001 prop", "weapon", "garape", "grape", "equip"]
     for b in arm_data.bones:
         b_name = b.name
         b_low = b_name.lower()
@@ -246,6 +244,16 @@ def distribute_standard_rig_bones(
             if not b_name.startswith("MCH-") and not b_name.startswith("ORG-"):
                 b2c(b_name, 21, "Weapon")
                 b2c(b_name, 21, "Props")
+
+    if is_version_4:
+        for w_name in ["Weapon", "Props"]:
+            w_c = collections.get(w_name)
+            if w_c:
+                has_w = any(b.name not in ["prop.L", "prop.R"] for b in w_c.bones)
+                w_c.is_visible = has_w
+    else:
+        has_w = any(b.name not in ["prop.L", "prop.R"] and b.layers[21] for b in arm_data.bones)
+        arm_data.layers[21] = has_w
 
     # 6. Face
     fast_move([
