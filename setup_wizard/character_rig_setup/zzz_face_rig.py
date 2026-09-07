@@ -176,6 +176,30 @@ def find_armature_and_head(mesh_obj):
     return armature, head_name
 
 
+def find_eye_bone_pair(armature):
+    if not armature or not hasattr(armature, "data") or not armature.data:
+        return None, None
+    candidates_L = ("eye.L", "DEF-eye.L", "Skn_L_Eye", "+EyeBone L A01", "+EyeBone L A02", "EYE_L", "Eye_L", "PT_L_Eye", "Bn_Eye_L")
+    candidates_R = ("eye.R", "DEF-eye.R", "Skn_R_Eye", "+EyeBone R A01", "+EyeBone R A02", "EYE_R", "Eye_R", "PT_R_Eye", "Bn_Eye_R")
+    eye_L = next((c for c in candidates_L if c in armature.data.bones), None)
+    eye_R = next((c for c in candidates_R if c in armature.data.bones), None)
+    if not eye_L:
+        for b in armature.data.bones:
+            low = b.name.lower()
+            if "eye" in low and any(s in low for s in ["_l", ".l", "l_", "left"]):
+                if not any(ex in low for ex in ["track", "ctrl", "mch", "target", "brow", "lid", "lash", "star", "aim", "iris", "pupil"]):
+                    eye_L = b.name
+                    break
+    if not eye_R:
+        for b in armature.data.bones:
+            low = b.name.lower()
+            if "eye" in low and any(s in low for s in ["_r", ".r", "r_", "right"]):
+                if not any(ex in low for ex in ["track", "ctrl", "mch", "target", "brow", "lid", "lash", "star", "aim", "iris", "pupil"]):
+                    eye_R = b.name
+                    break
+    return eye_L, eye_R
+
+
 def find_eyebrow_bones(armature):
     out = []
     for b in armature.data.bones:
@@ -195,7 +219,7 @@ def find_mouth_bones(armature):
         low = b.name.strip().lower()
         if low.startswith("ctrl-") or low.startswith("face-root") or low.startswith("mch-") or low.startswith("def-") or low.startswith("org-"):
             continue
-        if any(k in low for k in ["skn_l_mouth", "skn_r_mouth", "skn_m_mouth", "bdymouth", "bdy_m_mouth", "ptmouth", "pt_m_mouth", "bn_mouthcontrol", "mouth_a", "mouth_b", "mouth_c", "ctr_up_teeth", "ctr_down_teeth"]):
+        if any(k in low for k in ["skn_l_mouth", "skn_r_mouth", "skn_m_mouth", "bdymouth", "bdy_m_mouth", "ptmouth", "pt_m_mouth", "bn_mouthcontrol", "mouth_a", "mouth_b", "mouth_c", "ctr_up_teeth", "ctr_down_teeth"]) or ("mouth" in low and ("_l" in low or "_r" in low or "_m" in low or low.startswith("skn_"))):
             out.append(b.name)
     return out
 
@@ -542,8 +566,9 @@ def face_frame(mesh_obj, armature=None):
 
     face_size = 0.20
     if armature:
-        eb_L = armature.data.bones.get("eye.L") or armature.data.bones.get("DEF-eye.L") or armature.data.bones.get("Skn_L_Eye")
-        eb_R = armature.data.bones.get("eye.R") or armature.data.bones.get("DEF-eye.R") or armature.data.bones.get("Skn_R_Eye")
+        eye_L_name, eye_R_name = find_eye_bone_pair(armature)
+        eb_L = armature.data.bones.get(eye_L_name) if eye_L_name else None
+        eb_R = armature.data.bones.get(eye_R_name) if eye_R_name else None
         if eb_L and eb_R:
             sep = (eb_L.head_local - eb_R.head_local).length
             if 0.01 < sep < 0.3:
@@ -1416,17 +1441,7 @@ def setup_lookat_eyes(armature, head_name, fwd, up, face_size):
         bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.objects.active = armature
 
-    eye_L_name = None
-    for cand in ("eye.L", "DEF-eye.L", "Skn_L_Eye", "+EyeBone L A01", "+EyeBone L A02", "EYE_L", "Eye_L", "PT_L_Eye", "Bn_Eye_L"):
-        if cand in armature.data.bones:
-            eye_L_name = cand
-            break
-    eye_R_name = None
-    for cand in ("eye.R", "DEF-eye.R", "Skn_R_Eye", "+EyeBone R A01", "+EyeBone R A02", "EYE_R", "Eye_R", "PT_R_Eye", "Bn_Eye_R"):
-        if cand in armature.data.bones:
-            eye_R_name = cand
-            break
-
+    eye_L_name, eye_R_name = find_eye_bone_pair(armature)
     if not eye_L_name or not eye_R_name:
         return
 
@@ -1666,7 +1681,8 @@ def zzz_face_rig_main():
                     if _d['axis'] == 'X':
                         _d['dir'] = -_d['dir']
 
-        has_eye_bones = any(cand in armature.data.bones for cand in ("eye.L", "DEF-eye.L", "Skn_L_Eye", "+EyeBone L A01", "EYE_L", "Eye_L", "PT_L_Eye", "Bn_Eye_L"))
+        _eye_L, _eye_R = find_eye_bone_pair(armature)
+        has_eye_bones = (_eye_L is not None and _eye_R is not None)
 
         if not controls and not has_eye_bones:
             print("[ZZZ Face Rig] No drivable shape keys or facial bones found.")

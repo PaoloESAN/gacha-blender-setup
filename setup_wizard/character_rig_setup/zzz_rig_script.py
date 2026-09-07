@@ -55,6 +55,28 @@ def rig_character(
         else:
             raise RuntimeError("No armature found. Please select the character's armature and try again.")
 
+    # Normalize Bip prefix (e.g. Bip002 -> Bip001) for models with non-standard biped names
+    import re
+    bip_pattern = re.compile(r'^Bip\d{3}\b')
+    if any(bip_pattern.match(b.name) and not b.name.startswith("Bip001") for b in head_bone_arm_target.data.bones):
+        try:
+            if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+        bpy.context.view_layer.objects.active = head_bone_arm_target
+        head_bone_arm_target.select_set(True)
+        bpy.ops.object.mode_set(mode='POSE')
+        for pb in head_bone_arm_target.pose.bones:
+            if bip_pattern.match(pb.name) and not pb.name.startswith("Bip001"):
+                pb.name = re.sub(r'^Bip\d{3}', 'Bip001', pb.name)
+        bpy.ops.object.mode_set(mode='OBJECT')
+        for obj in bpy.data.objects:
+            if obj.type == 'MESH':
+                for vg in obj.vertex_groups:
+                    if bip_pattern.match(vg.name) and not vg.name.startswith("Bip001"):
+                        vg.name = re.sub(r'^Bip\d{3}', 'Bip001', vg.name)
+
     temp_armature = head_bone_arm_target.data
 
     bpy.ops.object.mode_set(mode='EDIT')
@@ -83,6 +105,24 @@ def rig_character(
             right_eye_exists = True
             right_eye_bone_name = name
             break
+
+    # Dynamic fallback for character-specific eye bone names (e.g. Skn_Wis_L_Eye, Wis_Eye_L, etc.)
+    if not left_eye_exists:
+        for b in temp_armature.edit_bones:
+            b_low = b.name.lower()
+            if "eye" in b_low and ("_l" in b_low or ".l" in b_low or "l_" in b_low or "left" in b_low):
+                if not any(ex in b_low for ex in ["track", "ctrl", "mch", "target", "brow", "lid", "lash", "star"]):
+                    left_eye_exists = True
+                    left_eye_bone_name = b.name
+                    break
+    if not right_eye_exists:
+        for b in temp_armature.edit_bones:
+            b_low = b.name.lower()
+            if "eye" in b_low and ("_r" in b_low or ".r" in b_low or "r_" in b_low or "right" in b_low):
+                if not any(ex in b_low for ex in ["track", "ctrl", "mch", "target", "brow", "lid", "lash", "star"]):
+                    right_eye_exists = True
+                    right_eye_bone_name = b.name
+                    break
 
     no_eyes = False    
     if not left_eye_exists and not right_eye_exists:
@@ -2151,7 +2191,7 @@ def rig_character(
                 c_chain.append(cname)
                 all_skirt_ctrl_bones.append(cname)
 
-            # Align tails along the chain towards the next head so bone axes point cleanly down the skirt
+            # Align control tails along the chain towards the next head so bone axes point cleanly down the skirt
             for i in range(len(chain)):
                 bname = chain[i]
                 cname = c_chain[i]
@@ -2159,18 +2199,16 @@ def rig_character(
                 ctrl_eb = armature.edit_bones[cname]
                 if i < len(chain) - 1:
                     next_head = armature.edit_bones[chain[i+1]].head.copy()
-                    orig_eb.tail = next_head
                     ctrl_eb.tail = next_head.copy()
                 else:
                     if len(chain) > 1:
                         prev_head = armature.edit_bones[chain[i-1]].head.copy()
-                        dir_v = (orig_eb.head - prev_head).normalized()
-                        seg_len = (orig_eb.head - prev_head).length
+                        dir_v = (ctrl_eb.head - prev_head).normalized()
+                        seg_len = (ctrl_eb.head - prev_head).length
                     else:
                         dir_v = Vector((0, 0, -1))
                         seg_len = 0.05
-                    orig_eb.tail = orig_eb.head + dir_v * seg_len
-                    ctrl_eb.tail = orig_eb.tail.copy()
+                    ctrl_eb.tail = ctrl_eb.head + dir_v * seg_len
 
             for i, cname in enumerate(c_chain):
                 ctrl_eb = armature.edit_bones[cname]
