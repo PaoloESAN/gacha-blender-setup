@@ -862,7 +862,7 @@ def rig_character(
 
     bpy.context.view_layer.objects.active = bpy.data.objects["rigify"]
 
-    setup_neck_and_head_follow(neck_follow_value=0.0, head_follow_value=0.0)
+    setup_neck_and_head_follow(neck_follow_value=1.0, head_follow_value=1.0)
     setup_finger_scale_controls_on_x_axis_to_curl_just_the_fingertips(rigifyr)
 
     bpy.ops.object.mode_set(mode='EDIT')
@@ -2240,8 +2240,8 @@ def rig_character(
                 del plate["Toggle Shoulder Constraints"]
             if "Viewport Outlines" in plate:
                 del plate["Viewport Outlines"]
-            set_prop(plate, "Head Follow", 0.00, 0.0, 1.0, "Head Follow")
-            set_prop(plate, "Neck Follow", 0.50, 0.0, 1.0, "Neck Follow")
+            set_prop(plate, "Head Follow", 1.00, 0.0, 1.0, "Head Follow")
+            set_prop(plate, "Neck Follow", 1.00, 0.0, 1.0, "Neck Follow")
             set_prop(plate, "Use Head Controller", 0.00, 0.0, 1.0, "Use Head Tracker Controller")
             set_prop(plate, "EyeCorrection", 1.00, 0.0, 1.0, "Adjust Pupil Wink Distance")
             set_prop(plate, "Skirt_Follow", 0.00, 0.0, 1.0, "Skirt Follow (Torso)")
@@ -2752,11 +2752,13 @@ def rig_character(
         if "thigh_parent.R" in bpy.data.objects[char_name+"Rig"].pose.bones:
             bpy.data.objects[char_name+"Rig"].pose.bones["thigh_parent.R"]["pole_vector"] = True
 
-    if "torso" in bpy.data.objects[char_name+"Rig"].pose.bones:
-        if "head_follow" in bpy.data.objects[char_name+"Rig"].pose.bones["torso"]:
-            bpy.data.objects[char_name+"Rig"].pose.bones["torso"]["head_follow"] = 0.0
-        if "neck_follow" in bpy.data.objects[char_name+"Rig"].pose.bones["torso"]:
-            bpy.data.objects[char_name+"Rig"].pose.bones["torso"]["neck_follow"] = 0.5
+    for t_name in ["torso", "torso.002"]:
+        if t_name in bpy.data.objects[char_name+"Rig"].pose.bones:
+            pb_t = bpy.data.objects[char_name+"Rig"].pose.bones[t_name]
+            if "head_follow" in pb_t:
+                pb_t["head_follow"] = 1.0
+            if "neck_follow" in pb_t:
+                pb_t["neck_follow"] = 1.0
     # Configure IK_parent with dropdown items matching Rigify's Pole Parent dropdown
     def setup_ik_parent_dropdown(bone_name, default_val=1):
         rig_obj = bpy.data.objects.get(char_name + "Rig")
@@ -3354,30 +3356,42 @@ def rig_character(
                         elif '["neck_follow"]' in target.data_path:
                             target.data_path = 'pose.bones["plate-settings"]["Neck Follow"]'
 
-    pb_torso = this_obj.pose.bones.get("torso")
-    if pb_torso:
-        try:
-            d_hf = pb_torso.driver_add('["head_follow"]').driver
-            d_hf.type = 'SCRIPTED'
-            d_hf.expression = "var"
-            var_hf = d_hf.variables.new()
-            var_hf.name = "var"
-            var_hf.type = 'SINGLE_PROP'
-            var_hf.targets[0].id = this_obj
-            var_hf.targets[0].data_path = 'pose.bones["plate-settings"]["Head Follow"]'
-        except Exception:
-            pass
-        try:
-            d_nf = pb_torso.driver_add('["neck_follow"]').driver
-            d_nf.type = 'SCRIPTED'
-            d_nf.expression = "var"
-            var_nf = d_nf.variables.new()
-            var_nf.name = "var"
-            var_nf.type = 'SINGLE_PROP'
-            var_nf.targets[0].id = this_obj
-            var_nf.targets[0].data_path = 'pose.bones["plate-settings"]["Neck Follow"]'
-        except Exception:
-            pass
+    # Retarget head and neck follow Copy Rotation constraints to root instead of torso/COG,
+    # ensuring that when Head/Neck Follow = 0, the head stays upright in world/root space
+    # instead of rotating with COG while ignoring chest.
+    root_bname = "root" if "root" in this_obj.pose.bones else ("root.002" if "root.002" in this_obj.pose.bones else "root.001")
+    for b_name in ["MCH-ROT-head", "MCH-ROT-neck"]:
+        pb_rot = this_obj.pose.bones.get(b_name)
+        if pb_rot:
+            for c in pb_rot.constraints:
+                if c.type == 'COPY_ROTATION' and root_bname:
+                    c.subtarget = root_bname
+
+    for t_name in ["torso", "torso.002"]:
+        pb_t = this_obj.pose.bones.get(t_name)
+        if pb_t:
+            try:
+                d_hf = pb_t.driver_add('["head_follow"]').driver
+                d_hf.type = 'SCRIPTED'
+                d_hf.expression = "var"
+                var_hf = d_hf.variables.new()
+                var_hf.name = "var"
+                var_hf.type = 'SINGLE_PROP'
+                var_hf.targets[0].id = this_obj
+                var_hf.targets[0].data_path = 'pose.bones["plate-settings"]["Head Follow"]'
+            except Exception:
+                pass
+            try:
+                d_nf = pb_t.driver_add('["neck_follow"]').driver
+                d_nf.type = 'SCRIPTED'
+                d_nf.expression = "var"
+                var_nf = d_nf.variables.new()
+                var_nf.name = "var"
+                var_nf.type = 'SINGLE_PROP'
+                var_nf.targets[0].id = this_obj
+                var_nf.targets[0].data_path = 'pose.bones["plate-settings"]["Neck Follow"]'
+            except Exception:
+                pass
         
     # Delete all existing bone collections, and make new ones.   
     if is_version_4:
@@ -4157,13 +4171,15 @@ def rig_character(
         log_text.write("No warnings or messages recorded.\n")
     log_text.write("\n=== END ===")
     
-def setup_neck_and_head_follow(neck_follow_value=0.0, head_follow_value=0.0):
-    if bpy.context.object and hasattr(bpy.context.object, "pose") and bpy.context.object.pose and "torso" in bpy.context.object.pose.bones:
-        torso_pb = bpy.context.object.pose.bones["torso"]
-        if "neck_follow" in torso_pb:
-            torso_pb["neck_follow"] = neck_follow_value
-        if "head_follow" in torso_pb:
-            torso_pb["head_follow"] = head_follow_value
+def setup_neck_and_head_follow(neck_follow_value=1.0, head_follow_value=1.0):
+    if bpy.context.object and hasattr(bpy.context.object, "pose") and bpy.context.object.pose:
+        for t_name in ["torso", "torso.002"]:
+            torso_pb = bpy.context.object.pose.bones.get(t_name)
+            if torso_pb:
+                if "neck_follow" in torso_pb:
+                    torso_pb["neck_follow"] = neck_follow_value
+                if "head_follow" in torso_pb:
+                    torso_pb["head_follow"] = head_follow_value
 
 
 # Make it so that the finger scale controls can be scaled on the X axis to curl in just the fingertips instead of the entire finger.
