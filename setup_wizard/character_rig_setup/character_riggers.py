@@ -501,9 +501,10 @@ class ZenlessZoneZeroCharacterRigger(CharacterRigger):
 
     def rig_character(self):
         cache_enabled = self.context.window_manager.cache_enabled
-        filepath = get_cache(cache_enabled).get(self.rigify_bone_shapes_file_path) or self.blender_operator.filepath
+        cached = get_cache(cache_enabled).get(self.rigify_bone_shapes_file_path)
+        filepath = cached if (cached and os.path.isfile(cached)) else (self.blender_operator.filepath if (self.blender_operator.filepath and os.path.isfile(self.blender_operator.filepath)) else None)
 
-        if not filepath:
+        if not filepath or not os.path.isfile(filepath):
             filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RootShape.blend')
 
         armature = _get_character_armature(self.context)

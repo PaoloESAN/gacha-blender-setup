@@ -92,8 +92,13 @@ else:
         register as register_genshin_setup_wizard,
     )
     from setup_wizard.set_up_head_driver import (
+        ZZZ_OT_SetUpHeadDriver,
         WW_OT_SetUpHeadDriver,
         AKE_OT_SetUpHeadDriver,
+    )
+    from setup_wizard.misc_operations import (
+        ZZZ_OT_RenameCollectionAndRig,
+        ZZZ_OT_MoveLightingPanelToCharacterCollection,
     )
     from setup_wizard.misc_final_steps import (
         GI_OT_FixTransformations,
@@ -279,6 +284,9 @@ else:
         ZZZ_OT_SetUpOutlines,
         ZZZ_OT_FinishSetup,
         ZZZ_OT_FixBoneChains,
+        ZZZ_OT_SetUpHeadDriver,
+        ZZZ_OT_RenameCollectionAndRig,
+        ZZZ_OT_MoveLightingPanelToCharacterCollection,
         NTE_PT_Setup_Wizard_UI_Layout,
         NTE_PT_Basic_Setup_Wizard_UI_Layout,
         NTE_PT_Advanced_Setup_Wizard_UI_Layout,

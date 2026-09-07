@@ -1015,6 +1015,25 @@ def apply_color(armature, pb, group_name, rgb, cache):
         pb.bone_group = grp
 
 
+def is_face_rig_bone(bone_name):
+    if bone_name == "Face-Root":
+        return True
+    b_low = bone_name.lower()
+    if any(k in b_low for k in ("skirt", "hair", "dress", "cloth", "surfboard", "weapon", "spine", "arm", "leg", "hand", "foot", "torso", "root")):
+        return False
+    if bone_name.startswith("CTRL-Ctr_"):
+        return False
+    if any(bone_name.startswith(p) for p in (
+        "CTRL-Mouth", "CTRL-Eye", "CTRL-Brow", "CTRL-Eyebrow",
+        "CTRL-Master-Eyebrow", "CTRL-O_O", "CTRL-Fac_", "CTRL-Face",
+        "MCH-EyeAim"
+    )):
+        return True
+    if bone_name.startswith("CTRL-") and any(k in b_low for k in ("eyebrow", "ebrow", "brow", "eye", "mouth", "lip", "jaw", "highlight", "viseme")):
+        return True
+    return False
+
+
 def purge_previous(armature):
     if bpy.context.object and bpy.context.object.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -1022,7 +1041,7 @@ def purge_previous(armature):
     bpy.ops.object.mode_set(mode='EDIT')
     eb = armature.data.edit_bones
     for b in list(eb):
-        if b.name.startswith("CTRL-") or b.name == "Face-Root":
+        if is_face_rig_bone(b.name):
             eb.remove(b)
     bpy.ops.object.mode_set(mode='OBJECT')
     for o in list(bpy.data.objects):

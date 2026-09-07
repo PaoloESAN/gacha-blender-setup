@@ -144,7 +144,7 @@ class HOYOVERSE_OT_rig_character(Operator, ImportHelper, CustomOperatorPropertie
             self.invoke_next_step()
             return {'FINISHED'}
 
-        if self.game_type in (GameType.WUTHERING_WAVES.name, GameType.NEVERNESS_TO_EVERNESS.name):
+        if self.game_type in (GameType.WUTHERING_WAVES.name, GameType.NEVERNESS_TO_EVERNESS.name, GameType.ZENLESS_ZONE_ZERO.name):
             if not rigify_installed:
                 self.report(
                     {'WARNING'},
