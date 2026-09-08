@@ -947,6 +947,8 @@ class ArknightsEndfieldMaterialImporterFacade(GameMaterialImporter):
                                 n.inputs['HNormalStrength'].default_value = 1.5
                             if 'Skin NormalStrength' in n.inputs:
                                 n.inputs['Skin NormalStrength'].default_value = 1.5
+                            if 'MetallicMax' in n.inputs and is_hair:
+                                n.inputs['MetallicMax'].default_value = 0.4
                             if is_hair:
                                 for fresnel_pow_key in ('ToonFresnelPow', 'Toon Fresnel Pow', 'ToonFresnel Pow', 'Toon FresnelPow'):
                                     if fresnel_pow_key in n.inputs:

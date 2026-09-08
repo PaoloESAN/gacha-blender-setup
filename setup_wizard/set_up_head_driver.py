@@ -1,5 +1,6 @@
 # Author: michael-gh1
 
+import math
 import os
 import bpy
 from bpy.types import Operator
@@ -643,33 +644,39 @@ def setup_ake_head_driver_system(context=None):
     if not hc:
         return
 
-    # 1. Unparent and clear previous transforms
+    # The .blend already carries the correct HC/HF/HR rotation/scale/offsets:
+    # do not touch anything, only move the system to the head preserving transforms.
+    context.view_layer.update()
+    hc_world_before = hc.matrix_world.copy()
+    children_world = {}
     for obj in [hf, hr]:
         if obj:
-            obj.parent = None
-            obj.matrix_world.identity()
+            children_world[obj.name] = obj.matrix_world.copy()
 
     hc.parent = None
     for c in list(hc.constraints):
         hc.constraints.remove(c)
 
-    # 2. Position HC at head center
-    hc.location = head_world_pos
-    hc.rotation_euler = (0, 0, 0)
-    hc.scale = (0.28, 0.28, 0.28)
+    # 2. Move HC to the head center and apply rotation (90, -90, -180) deg.
+    # HF/HR inherit it as children: their local transforms are left untouched.
+    hc.matrix_world = hc_world_before
+    hc.matrix_world.translation = head_world_pos
+    hc.rotation_mode = 'XYZ'
+    hc.rotation_euler = (
+        math.radians(90.0),
+        math.radians(-90.0),
+        math.radians(-180.0),
+    )
+    context.view_layer.update()
 
-    # 3. Position HF and HR (swapped)
-    if hf:
-        hf.parent = hc
-        hf.location = (1.0, 0.0, 0.0)
-        hf.rotation_euler = (0, 0, 0)
-        hf.scale = (1.0, 1.0, 1.0)
-
-    if hr:
-        hr.parent = hc
-        hr.location = (0.0, 0.0, -1.0)
-        hr.rotation_euler = (0, 0, 0)
-        hr.scale = (1.0, 1.0, 1.0)
+    # 3. Ensure parenting to HC without altering .blend transforms
+    for obj in [hf, hr]:
+        if not obj:
+            continue
+        if obj.parent != hc:
+            obj.parent = hc
+            obj.matrix_world = children_world[obj.name]
+    context.view_layer.update()
 
     # 4. Add Child Of constraint to HC and call childof_set_inverse
     con = hc.constraints.new('CHILD_OF')

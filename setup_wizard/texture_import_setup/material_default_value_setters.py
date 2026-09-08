@@ -335,6 +335,12 @@ class ArknightsEndfieldMaterialDefaultValueSetter(MaterialDefaultValueSetter):
                             inputs['BaseColor'].default_value = (c.get('r', 1.0), c.get('g', 1.0), c.get('b', 1.0), c.get('a', 1.0))
                         except Exception:
                             pass
+                        # The Default baseline is re-captured on the next sync
+                        try:
+                            if 'ake_def_BaseColor' in mat.keys():
+                                del mat['ake_def_BaseColor']
+                        except Exception:
+                            pass
 
                     if 'Emission Color' in inputs and '_EmissionColor' in colors:
                         c = colors['_EmissionColor']
@@ -407,9 +413,12 @@ class ArknightsEndfieldMaterialDefaultValueSetter(MaterialDefaultValueSetter):
                         except Exception:
                             pass
 
-                    if 'MetallicMax' in inputs and '_Metallic' in floats:
+                    if 'MetallicMax' in inputs:
                         try:
-                            inputs['MetallicMax'].default_value = float(floats['_Metallic'])
+                            if is_hair:
+                                inputs['MetallicMax'].default_value = 0.4
+                            elif '_Metallic' in floats:
+                                inputs['MetallicMax'].default_value = float(floats['_Metallic'])
                         except Exception:
                             pass
 
@@ -417,6 +426,12 @@ class ArknightsEndfieldMaterialDefaultValueSetter(MaterialDefaultValueSetter):
                         sp = float(floats['_Specular'])
                         try:
                             inputs['SpecularColor'].default_value = (sp, sp, sp, 1.0)
+                        except Exception:
+                            pass
+                        # The Default baseline is re-captured on the next sync
+                        try:
+                            if 'ake_def_SpecularColor' in mat.keys():
+                                del mat['ake_def_SpecularColor']
                         except Exception:
                             pass
 
@@ -460,10 +475,24 @@ class ArknightsEndfieldMaterialDefaultValueSetter(MaterialDefaultValueSetter):
                                 inputs['Eyes HightLight brightness'].default_value = float(floats['_EmissionBrightness']) * 5.0
                             except Exception:
                                 pass
+                        # The Character Settings multiplier base is re-captured
+                        for _k in ("ake_eye_base", "ake_eye_hl_base"):
+                            try:
+                                if _k in mat.keys():
+                                    del mat[_k]
+                            except Exception:
+                                pass
 
                     if 'Eyes brightness' in inputs and '_EmissionBrightness' in floats:
                         try:
                             inputs['Eyes brightness'].default_value = max(float(floats['_EmissionBrightness']), 1.2)
                         except Exception:
                             pass
+                        # The Character Settings multiplier base is re-captured
+                        for _k in ("ake_eye_base", "ake_eye_hl_base"):
+                            try:
+                                if _k in mat.keys():
+                                    del mat[_k]
+                            except Exception:
+                                pass
 
