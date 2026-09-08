@@ -1428,8 +1428,8 @@ def rig_character(
     this_obj.pose.bones["shoulder.L"].custom_shape_scale_xyz = (1.6,1.6,1.6)
     this_obj.pose.bones["shoulder.R"].custom_shape_scale_xyz = (1.6,1.6,1.6)
 
-    this_obj.pose.bones["foot_heel_ik.L"].custom_shape_translation = (0.0,0.06,0.0)
-    this_obj.pose.bones["foot_heel_ik.R"].custom_shape_translation = (0.0,0.06,0.0)
+    this_obj.pose.bones["foot_heel_ik.L"].custom_shape_translation = (0.0,0.0,0.0)
+    this_obj.pose.bones["foot_heel_ik.R"].custom_shape_translation = (0.0,0.0,0.0)
 
     this_obj.pose.bones["foot_spin_ik.R"].custom_shape_translation = (0.0,-0.05,0.02)
     this_obj.pose.bones["foot_spin_ik.L"].custom_shape_translation = (0.0,-0.05,0.02)
@@ -1956,6 +1956,43 @@ def rig_character(
     
     armature.edit_bones['ik-target-R'].head = armature.edit_bones['foot_tweak.R'].head.copy()
     armature.edit_bones['ik-target-R'].tail = armature.edit_bones['foot_tweak.R'].tail.copy()
+
+    # HEEL: move foot_heel_ik back to the anatomical heel like Miyabi Foot_Roll.
+    # Minimal/safe: only translate the control (orientation, parent and MCH
+    # constraints untouched, widget shape untouched), so rest pose cannot deform:
+    # the MCH chain copies heel LOCAL rotation only, and it stays zero at rest.
+    for _side in ('.L', '.R'):
+        _heel = f'foot_heel_ik{_side}'
+        _foot_ik = f'foot_ik{_side}'
+        _spin = f'foot_spin_ik{_side}'
+        if _heel in armature.edit_bones and _foot_ik in armature.edit_bones:
+            try:
+                _hb = armature.edit_bones[_heel]
+                _ankle = armature.edit_bones[_foot_ik].head.copy()
+                if _spin in armature.edit_bones:
+                    _ball = armature.edit_bones[_spin].head.copy()
+                else:
+                    _ball = armature.edit_bones[_foot_ik].tail.copy()
+                _y_span = _ankle.y - _ball.y
+                _z_span = _ankle.z - _ball.z
+                if abs(_y_span) < 1e-5:
+                    _toe = f'toe_ik{_side}'
+                    if _toe in armature.edit_bones:
+                        _ball = armature.edit_bones[_toe].head.copy()
+                        _y_span = _ankle.y - _ball.y
+                        _z_span = _ankle.z - _ball.z
+                if abs(_y_span) < 1e-5:
+                    continue
+                _vec = _hb.tail - _hb.head
+                _heel_y = _ankle.y + _y_span * 0.88
+                if abs(_z_span) > 1e-5:
+                    _heel_z = _ankle.z - _z_span * 0.37
+                else:
+                    _heel_z = _hb.head.z
+                _hb.head = Vector((_ankle.x, _heel_y, _heel_z))
+                _hb.tail = _hb.head + _vec
+            except Exception as _e:
+                print(f"[ZZZ RIG] heel translate skipped {_heel}: {_e}")
     
     foot_L_x_diff = armature.edit_bones['ik-sub-pivot-L'].tail.x - armature.edit_bones['foot_spin_ik.L'].tail.x
     foot_R_x_diff = armature.edit_bones['ik-sub-pivot-R'].tail.x - armature.edit_bones['foot_spin_ik.R'].tail.x
