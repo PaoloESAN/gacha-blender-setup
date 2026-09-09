@@ -706,6 +706,13 @@ def build_rig_layers_ui_code(original_name, setup_version):
                 "\n            row_pivots = split.row(align=True)" +
                 "\n            " + make_solo_str("Clothes", "pivots") +
                 "\n            row = col.row()" +
+                # Tails (only drawn when the rig has a Tails bone collection, e.g. ZZZ)
+                "\n            split = row.split(align=True, factor=split_size)" +
+                "\n            row = split.row(align=True)" +
+                "\n            " + make_layer_str("Tails", 22, vers) +
+                "\n            row = split.row(align=True)" +
+                "\n            " + make_solo_str("Tails") +
+                "\n            row = col.row()" +
                 # Cage / Other
                 "\n            split = row.split(factor=split_small, align=True)" +
                 "\n            row_tweaks = split.row(align=True)" +

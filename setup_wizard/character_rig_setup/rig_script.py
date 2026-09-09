@@ -1450,8 +1450,13 @@ def rig_character(
 
             wgt_coll.objects.link(obj)
 
-    # Remove old unused wgt collection
-    bpy.data.collections.remove(bpy.data.collections.get("WG"))
+    # Remove old unused wgt collection (guarded: may not exist)
+    _wg_coll = bpy.data.collections.get("WG")
+    if _wg_coll:
+        try:
+            bpy.data.collections.remove(_wg_coll)
+        except Exception:
+            pass
 
     def get_and_rename_empty(empty_name):
         obj = bpy.data.objects.get(empty_name)
@@ -1503,22 +1508,27 @@ def rig_character(
         to_del_coll = bpy.data.collections.get(
             LightingPanelNames.Collections.WIDGET_COLLECTION
         )
-        for obj in to_del_coll.objects:
-            move_into_collection(obj.name, "wgt")
+        if to_del_coll:
+            for obj in list(to_del_coll.objects):
+                move_into_collection(obj.name, "wgt")
         to_del_coll = bpy.data.collections.get(LightingPanelNames.Collections.PICKER)
-        for obj in to_del_coll.objects:
-            move_into_collection(obj.name, "wgt")
+        if to_del_coll:
+            for obj in list(to_del_coll.objects):
+                move_into_collection(obj.name, "wgt")
         to_del_coll = bpy.data.collections.get(LightingPanelNames.Collections.WHEEL)
-        for obj in to_del_coll.objects:
-            move_into_collection(obj.name, char_name)
+        if to_del_coll:
+            for obj in list(to_del_coll.objects):
+                move_into_collection(obj.name, char_name)
         # DO NOT INCLUDE CHILDREN. This will cause ColorPickers to be moved into the rig object.
         move_into_collection(
             LightingPanelNames.Objects.LIGHTING_PANEL, char_name, include_children=False
         )
-        bpy.data.collections.remove(
-            bpy.data.collections.get(LightingPanelNames.Collections.LIGHTING_PANEL),
-            do_unlink=True,
-        )
+        _lp_coll = bpy.data.collections.get(LightingPanelNames.Collections.LIGHTING_PANEL)
+        if _lp_coll:
+            try:
+                bpy.data.collections.remove(_lp_coll, do_unlink=True)
+            except Exception:
+                pass
 
     # If it exists, gets rid of the default collection.
     camera_coll = bpy.data.collections.get("Collection")
@@ -2417,49 +2427,21 @@ def rig_character(
     move_into_collection("root plate", "wgt")
     move_into_collection("head-control-shape", "wgt")
 
-    # 1 Face Bones
-    to_del_coll = bpy.data.collections.get("wgt.001")
-    for obj in to_del_coll.objects:
-        move_into_collection(obj.name, "wgt")
+    # Consolidate Rigify wgt.00X duplicates back into wgt (guarded: they may not exist)
+    for _wgt_dup in ["wgt.001", "wgt.002", "wgt.003", "wgt.004", "wgt.005", "wgt.006"]:
+        to_del_coll = bpy.data.collections.get(_wgt_dup)
+        if to_del_coll:
+            for obj in list(to_del_coll.objects):
+                move_into_collection(obj.name, "wgt")
 
-    # 2 Pelvis Bones
-    to_del_coll = bpy.data.collections.get("wgt.002")
-    for obj in to_del_coll.objects:
-        move_into_collection(obj.name, "wgt")
-
-    # 3 feet Bones
-    to_del_coll = bpy.data.collections.get("wgt.003")
-    for obj in to_del_coll.objects:
-        move_into_collection(obj.name, "wgt")
-
-    # 4 hand Bones
-    to_del_coll = bpy.data.collections.get("wgt.004")
-    for obj in to_del_coll.objects:
-        move_into_collection(obj.name, "wgt")
-
-    # idk bro math is wrong delete whatever this is too
-    to_del_coll = bpy.data.collections.get("wgt.005")
-    for obj in to_del_coll.objects:
-        move_into_collection(obj.name, "wgt")
-
-    to_del_coll = bpy.data.collections.get("wgt.006")
-    for obj in to_del_coll.objects:
-        move_into_collection(obj.name, "wgt")
-
-    # After moving into collection, delete the old empty ones.
-    bpy.data.collections.remove(bpy.data.collections.get("append_Root"), do_unlink=True)
-    bpy.data.collections.remove(
-        bpy.data.collections.get("append_Face Plate"), do_unlink=True
-    )
-    bpy.data.collections.remove(bpy.data.collections.get("append_Eyes"), do_unlink=True)
-    bpy.data.collections.remove(
-        bpy.data.collections.get("append_Pelvis"), do_unlink=True
-    )
-    bpy.data.collections.remove(bpy.data.collections.get("append_Foot"), do_unlink=True)
-    bpy.data.collections.remove(bpy.data.collections.get("append_Hand"), do_unlink=True)
-    bpy.data.collections.remove(
-        bpy.data.collections.get("append_Props"), do_unlink=True
-    )
+    # After moving into collection, delete the old empty ones (guarded).
+    for append_name in ["append_Root", "append_Face Plate", "append_Eyes", "append_Pelvis", "append_Foot", "append_Hand", "append_Props"]:
+        app_coll = bpy.data.collections.get(append_name)
+        if app_coll:
+            try:
+                bpy.data.collections.remove(app_coll, do_unlink=True)
+            except Exception:
+                pass
 
     # Adding Shape Key Drivers
     ourRig = char_name + "Rig"
@@ -3822,12 +3804,16 @@ def rig_character(
         to_del_coll = bpy.data.collections.get(
             "wgt.008"
         )  # note to future self, at some point, we can switch to a single mechanism that identifies wgt.00X and moves into wgt
-        for obj in to_del_coll.objects:
-            move_into_collection(obj.name, "wgt")
+        if to_del_coll:
+            for obj in list(to_del_coll.objects):
+                move_into_collection(obj.name, "wgt")
 
-        bpy.data.collections.remove(
-            bpy.data.collections.get("append_extras"), do_unlink=True
-        )
+        _ext_coll = bpy.data.collections.get("append_extras")
+        if _ext_coll:
+            try:
+                bpy.data.collections.remove(_ext_coll, do_unlink=True)
+            except Exception:
+                pass
 
         # From extra header's position, we can setup the first position to use
         slider_starting_position = extras_position.copy()

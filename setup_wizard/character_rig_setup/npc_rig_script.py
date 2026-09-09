@@ -879,8 +879,13 @@ def rig_character(
             
             wgt_coll.objects.link(obj)
             
-    # Remove old unused wgt collection                
-    bpy.data.collections.remove(bpy.data.collections.get("WG"))
+    # Remove old unused wgt collection (guarded: may not exist)
+    _wg_coll = bpy.data.collections.get("WG")
+    if _wg_coll:
+        try:
+            bpy.data.collections.remove(_wg_coll)
+        except Exception:
+            pass
 
     def get_and_rename_empty(empty_name):
         obj = bpy.data.objects.get(empty_name)
