@@ -749,22 +749,17 @@ class GI_PT_Rig_Character_Settings(Panel):
 
     @classmethod
     def poll(cls, context):
+        try:
+            from setup_wizard.ui.character_settings_utils import is_game_armature
+            return is_game_armature(context, "GENSHIN_IMPACT")
+        except Exception:
+            pass
         obj = context.active_object or context.object
         if not obj:
             return False
-
         is_rig = (obj.type == 'ARMATURE') or (obj.type == 'MESH' and obj.parent and obj.parent.type == 'ARMATURE')
         if not is_rig:
-            is_gi_mesh = obj.type == 'MESH' and any(s.material and ("hoyoverse - genshin" in s.material.name.lower() or "hoyoverse - gi" in s.material.name.lower() or "genshin" in s.material.name.lower()) for s in obj.material_slots)
-            if not is_gi_mesh:
-                return False
-
-        if getattr(context.scene, "game_type_dropdown", None) == GameType.GENSHIN_IMPACT.name:
-            return True
-
-        if any("hoyoverse - genshin" in m.name.lower() or "hoyoverse - gi" in m.name.lower() or "genshin" in m.name.lower() for m in bpy.data.materials):
-            return True
-
+            return False
         return False
 
     def draw(self, context):

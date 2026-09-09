@@ -1161,6 +1161,12 @@ def rig_character(
         pass
     if "rigify" in bpy.data.objects:
         bpy.data.objects["rigify"].name = char_name + "Rig"
+    try:
+        from setup_wizard.ui.character_settings_utils import stamp_rig_game
+        _rig = bpy.data.objects.get(char_name + "Rig")
+        stamp_rig_game(_rig, "GENSHIN_IMPACT", char_name)
+    except Exception:
+        pass
 
     bpy.ops.object.mode_set(mode="POSE")
     bpy.ops.pose.select_all(action="DESELECT")
@@ -1524,6 +1530,14 @@ def rig_character(
     bpy.context.view_layer.active_layer_collection = layerColl
 
     layerColl.exclude = True
+
+    # Append-safe: consolidate generic wgt / Rigify WGTS leftovers into WGTS_<Char>
+    try:
+        from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+        _rig = bpy.data.objects.get(char_name + "Rig")
+        isolate_wgts_for_character(_rig, char_name)
+    except Exception as e_wgts:
+        print(f"[GI RIG] WGTS isolation notice: {e_wgts}")
 
     # Make our lives easier, display the bones as sticks and make sure we can view from front.
     bpy.data.armatures[original_name].display_type = "STICK"
@@ -5410,6 +5424,21 @@ def rig_character(
                         rig_obj.data.layers[l_idx] = False
     except Exception as ex:
         print(f"Notice applying rest pose at end of rig: {ex}")
+
+    # Final Append-safe sweep: consolidate scene-root wgt / wgt.00X / WGTS leftovers
+    # created later in this function (merge_duplicate_collections, slider appends...)
+    # into WGTS_<Char> nested in the character collection.
+    try:
+        from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+        _rig_final = bpy.data.objects.get(char_name + "Rig")
+        if _rig_final is None:
+            try:
+                _rig_final = rig_obj
+            except Exception:
+                _rig_final = None
+        isolate_wgts_for_character(_rig_final, char_name)
+    except Exception as e_wgts:
+        print(f"[GI RIG] Final WGTS sweep notice: {e_wgts}")
 
 
 def setup_neck_and_head_follow(neck_follow_value, head_follow_value):

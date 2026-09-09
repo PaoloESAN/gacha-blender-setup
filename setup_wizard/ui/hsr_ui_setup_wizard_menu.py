@@ -603,22 +603,17 @@ class HSR_PT_Rig_Character_Settings(Panel):
 
     @classmethod
     def poll(cls, context):
+        try:
+            from setup_wizard.ui.character_settings_utils import is_game_armature
+            return is_game_armature(context, "HONKAI_STAR_RAIL")
+        except Exception:
+            pass
         obj = context.active_object or context.object
         if not obj:
             return False
-
         is_rig = (obj.type == 'ARMATURE') or (obj.type == 'MESH' and obj.parent and obj.parent.type == 'ARMATURE')
         if not is_rig:
-            is_hsr_mesh = obj.type == 'MESH' and any(s.material and ("stellartoon" in s.material.name.lower() or "hsr" in s.material.name.lower()) for s in obj.material_slots)
-            if not is_hsr_mesh:
-                return False
-
-        if getattr(context.scene, "game_type_dropdown", None) == GameType.HONKAI_STAR_RAIL.name:
-            return True
-
-        if any("stellartoon" in m.name.lower() or "hsr" in m.name.lower() for m in bpy.data.materials):
-            return True
-
+            return False
         return False
 
     def draw(self, context):

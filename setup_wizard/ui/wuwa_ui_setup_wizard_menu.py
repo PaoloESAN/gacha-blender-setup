@@ -276,21 +276,17 @@ class WW_PT_Rig_Character_Settings(Panel):
 
     @classmethod
     def poll(cls, context):
+        try:
+            from setup_wizard.ui.character_settings_utils import is_game_armature
+            return is_game_armature(context, "WUTHERING_WAVES")
+        except Exception:
+            pass
         obj = context.active_object or context.object
         if not obj:
             return False
-
         is_rig = (obj.type == 'ARMATURE') or (obj.type == 'MESH' and obj.parent and obj.parent.type == 'ARMATURE')
         if not is_rig:
             return False
-
-        if getattr(context.scene, "game_type_dropdown", None) == GameType.WUTHERING_WAVES.name:
-            return True
-
-        arm_obj = obj if obj.type == 'ARMATURE' else obj.parent
-        if arm_obj and (arm_obj.get("ww_model_prefix") is not None or "EyeTracker" in getattr(getattr(arm_obj, "data", None), "bones", [])):
-            return True
-
         return False
 
     def draw(self, context):

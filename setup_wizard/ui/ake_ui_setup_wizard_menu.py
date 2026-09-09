@@ -936,28 +936,17 @@ class AKE_PT_Rig_Character_Settings(Panel):
 
     @classmethod
     def poll(cls, context):
+        try:
+            from setup_wizard.ui.character_settings_utils import is_game_armature
+            return is_game_armature(context, "ARKNIGHTS_ENDFIELD")
+        except Exception:
+            pass
         obj = context.active_object or context.object
         if not obj:
             return False
-
         is_rig = (obj.type == 'ARMATURE') or (obj.type == 'MESH' and obj.parent and obj.parent.type == 'ARMATURE')
         if not is_rig:
-            is_ake_mesh = obj.type == 'MESH' and any(
-                s.material and any(k in s.material.name.lower() for k in ('arknights', 'endfield', 'body_01', 'face_01', 'cloth_01', 'hair_01'))
-                for s in obj.material_slots
-            )
-            if not is_ake_mesh:
-                return False
-
-        if getattr(context.scene, "game_type_dropdown", None) == GameType.ARKNIGHTS_ENDFIELD.name:
-            return True
-
-        if any(any(k in m.name.lower() for k in ('arknights', 'endfield')) for m in bpy.data.materials):
-            return True
-        if any(any(k in m.name.lower() for k in ('body_01', 'face_01', 'cloth_01', 'hair_01')) for m in bpy.data.materials):
-            if bpy.data.objects.get('HC') or bpy.data.objects.get('HF') or bpy.data.objects.get('HR'):
-                return True
-
+            return False
         return False
 
     def draw(self, context):

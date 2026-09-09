@@ -686,6 +686,11 @@ def rig_character(
     except Exception:
         pass
     rigifyr.name = char_name + "Rig"
+    try:
+        from setup_wizard.ui.character_settings_utils import stamp_rig_game
+        stamp_rig_game(rigifyr, "ARKNIGHTS_ENDFIELD", char_name)
+    except Exception:
+        pass
 
     if is_version_4:
         setup_standard_bone_collections(rigifyr, is_version_4)
@@ -736,17 +741,51 @@ def rig_character(
             except Exception:
                 pass
 
-    def move_into_collection(object_name, collection_name):
-        c_obj = bpy.data.objects.get(object_name)
-        if not c_obj:
+    def move_into_char_wgts(c_obj, wgts_coll):
+        if not c_obj or not wgts_coll:
             return
-        w_coll = bpy.data.collections.get(collection_name)
-        if not w_coll:
-            w_coll = bpy.data.collections.new(collection_name)
-            context.scene.collection.children.link(w_coll)
+        if c_obj.name not in wgts_coll.objects:
+            try:
+                wgts_coll.objects.link(c_obj)
+            except Exception:
+                return
         for ucoll in list(c_obj.users_collection):
-            ucoll.objects.unlink(c_obj)
-        w_coll.objects.link(c_obj)
+            if ucoll != wgts_coll:
+                try:
+                    ucoll.objects.unlink(c_obj)
+                except Exception:
+                    pass
+
+    def get_or_create_char_wgts(char_coll, char_name):
+        wgts_name = f"WGTS_{char_name}"
+        wgts_coll = bpy.data.collections.get(wgts_name)
+        if not wgts_coll:
+            wgts_coll = bpy.data.collections.new(wgts_name)
+        # Always nest inside character collection so Append brings only its own widgets
+        if wgts_coll.name not in char_coll.children:
+            try:
+                char_coll.children.link(wgts_coll)
+            except Exception:
+                pass
+        # Never leave per-character WGTS at scene root (causes cross-character pollution on Append)
+        if wgts_coll.name in context.scene.collection.children:
+            try:
+                context.scene.collection.children.unlink(wgts_coll)
+            except Exception:
+                pass
+        for parent_c in list(bpy.data.collections):
+            if parent_c != char_coll and wgts_coll.name in parent_c.children:
+                # Keep it only under char_coll
+                if parent_c.name == wgts_name:
+                    continue
+                try:
+                    parent_c.children.unlink(wgts_coll)
+                except Exception:
+                    pass
+        return wgts_coll
+
+    char_coll = rigifyr.users_collection[0] if rigifyr.users_collection else context.scene.collection
+    wgts_coll = get_or_create_char_wgts(char_coll, char_name)
 
     root_shape_names = {
         "root plate", "foot", "foot1", "hand", "hand-pivot", "pelvis", "pelvis1",
@@ -755,26 +794,61 @@ def rig_character(
         "eye circle", "eye controller", "setting-circle", "Wink_L", "Wink_R",
         "Eye_WUp", "Eye_WDown", "Eye_Angry", "Mouth"
     }
+    # Widgets actually referenced by this rig (custom shapes) -> must travel with it
+    referenced_shapes = set()
+    for pb in rigifyr.pose.bones:
+        cs = getattr(pb, "custom_shape", None)
+        if cs is not None:
+            referenced_shapes.add(cs.name)
     for w_obj in list(bpy.data.objects):
         if w_obj.type == "MESH" and not any(mod.type == "ARMATURE" for mod in w_obj.modifiers):
             is_wgt = (
-                w_obj.name.startswith("WGT-")
+                w_obj.name in referenced_shapes
+                or w_obj.name.startswith("WGT-")
                 or any(s in w_obj.name.lower() for s in ["root plate", "head-control-shape", "eye circle", "eye controller"])
                 or any(w_obj.name == s or w_obj.name.startswith(s + ".") for s in root_shape_names)
             )
             if is_wgt and not w_obj.name.startswith("S_actor_"):
-                move_into_collection(w_obj.name, "wgt")
+                move_into_char_wgts(w_obj, wgts_coll)
                 try:
                     w_obj.hide_viewport = True
                     w_obj.hide_render = True
                 except Exception:
                     pass
 
-    for coll in bpy.data.collections:
-        if coll.name == "wgt" or coll.name.startswith("WGTS_"):
-            coll.hide_viewport = True
-            coll.hide_select = True
-            coll.hide_render = True
+    # Migrate leftovers from Rigify auto-generated WGTS_* / global wgt that belong to this rig
+    for coll in list(bpy.data.collections):
+        if coll == wgts_coll:
+            continue
+        if coll.name == "wgt" or coll.name.startswith("WGTS_") or coll.name == "WGTS":
+            for c_obj in list(coll.objects):
+                cs_users = [pb for pb in rigifyr.pose.bones if getattr(pb, "custom_shape", None) == c_obj]
+                if cs_users or c_obj.name.startswith("WGT-") or c_obj.name in referenced_shapes:
+                    move_into_char_wgts(c_obj, wgts_coll)
+            if len(coll.objects) == 0 and len(coll.children) == 0 and coll.name != char_coll.name:
+                try:
+                    bpy.data.collections.remove(coll, do_unlink=True)
+                except Exception:
+                    pass
+
+    try:
+        wgts_coll.hide_viewport = True
+        wgts_coll.hide_select = True
+        wgts_coll.hide_render = True
+    except Exception:
+        pass
+    try:
+        def _exclude_wgts(lc, target):
+            if lc.collection == target:
+                lc.exclude = True
+                return True
+            for child in lc.children:
+                if _exclude_wgts(child, target):
+                    return True
+            return False
+        _exclude_wgts(context.view_layer.layer_collection, wgts_coll)
+    except Exception:
+        pass
 
     # 15. Re-target mesh Armature modifiers and parents to point to the new Rigify rig
     for obj_item in bpy.data.objects:
@@ -794,7 +868,7 @@ def rig_character(
     # 16. Update and run Rigify UI script
     modify_and_run_rig_ui_script(rigifyr, original_name, char_name=char_name)
 
-    # 17. Organize collections: ensure Lighting is nested in WGTS_Armature and Light is in character collection
+    # 17. Organize collections: ensure Lighting is nested in WGTS_<Char> and Light is in character collection
     try:
         from setup_wizard.set_up_head_driver import organize_ake_lighting_collections
         organize_ake_lighting_collections(context, rigifyr)

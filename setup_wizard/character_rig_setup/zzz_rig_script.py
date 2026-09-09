@@ -981,6 +981,12 @@ def rig_character(
         pass
     if "rigify" in bpy.data.objects:
         bpy.data.objects["rigify"].name = char_name + "Rig"
+    try:
+        from setup_wizard.ui.character_settings_utils import stamp_rig_game
+        _rig = bpy.data.objects.get(char_name + "Rig")
+        stamp_rig_game(_rig, "ZENLESS_ZONE_ZERO", char_name)
+    except Exception:
+        pass
                 
     bpy.ops.object.mode_set(mode='POSE')   
     bpy.ops.pose.select_all(action='DESELECT')
@@ -1312,6 +1318,10 @@ def rig_character(
     bpy.context.view_layer.active_layer_collection = layerColl
 
     layerColl.exclude = True
+
+    # NOTE: no aislar WGTS aquí (como en HSR): el inverse del Head Driver y el
+    # código posterior (appends wgt.00X, sliders) necesitan los objetos visibles.
+    # El barrido final al cierre de rig_character consolida todo en WGTS_<Char>.
 
     # Make our lives easier, display the bones as sticks and make sure we can view from front.    
     bpy.data.armatures[original_name].display_type = 'STICK'
@@ -4463,6 +4473,21 @@ def rig_character(
     else:
         log_text.write("No warnings or messages recorded.\n")
     log_text.write("\n=== END ===")
+
+    # Final Append-safe sweep: consolidate scene-root wgt / wgt.00X / WGTS leftovers
+    # created later in this function (merge_duplicate_collections, slider appends...)
+    # into WGTS_<Char> nested in the character collection.
+    try:
+        from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+        _rig_final = bpy.data.objects.get(char_name + "Rig")
+        if _rig_final is None:
+            try:
+                _rig_final = this_obj
+            except Exception:
+                _rig_final = None
+        isolate_wgts_for_character(_rig_final, char_name)
+    except Exception as e_wgts:
+        print(f"[ZZZ RIG] Final WGTS sweep notice: {e_wgts}")
     
 def setup_neck_and_head_follow(neck_follow_value=1.0, head_follow_value=1.0):
     if bpy.context.object and hasattr(bpy.context.object, "pose") and bpy.context.object.pose:
