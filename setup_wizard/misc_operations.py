@@ -603,6 +603,9 @@ def get_clean_character_name():
 
     # 5. From Collections
     for coll in bpy.data.collections:
+        c_low = coll.name.lower()
+        if c_low.startswith("wgt") or (c_low.startswith("wgts_") and c_low != "wgts_facerig"):
+            continue
         if coll.name.lower() not in ["lights", "wgt", "wgts", "collection", "master collection", "eye", "eyes"]:
             extracted = extract_clean_character_name(coll.name)
             if extracted and extracted.lower() not in ["character", "eye", "eyes", "lighting", "panel", "wgt", "lights"]:
@@ -615,6 +618,10 @@ def unlink_all_wgt_and_lights_from_scene():
     target_names = {"wgt", "wgts", "lights", "lighting panel wgt"}
     for coll in list(bpy.data.collections):
         c_low = coll.name.lower()
+        # Preserve per-character WGTS_<Char> nested in the character collection
+        # (Append-safe widget isolation). Only legacy globals get unlinked.
+        if c_low.startswith("wgts_") and c_low != "wgts_facerig":
+            continue
         if c_low in target_names or c_low.startswith("wgt") or c_low.endswith("wgt"):
             # Unlink from scene root collection
             if coll.name in bpy.context.scene.collection.children:
@@ -661,14 +668,27 @@ def find_zzz_character_armature():
     return None
 
 
+def _is_wgt_or_lights_collection(name):
+    n_low = name.lower()
+    return (
+        n_low in ["lights", "wgt", "wgts", "collection", "master collection", "eye", "eyes"]
+        or n_low.startswith("wgt")
+        or n_low.startswith("wgts_")
+    )
+
+
 def find_zzz_character_collection():
     for coll in bpy.data.collections:
         if coll.name.lower() not in ["lights", "wgt", "wgts", "collection", "master collection", "eye", "eyes"] and ("Avatar_" in coll.name or "Size" in coll.name):
             return coll
     for coll in bpy.data.collections:
-        if coll.name.lower() not in ["lights", "wgt", "wgts", "collection", "master collection", "eye", "eyes"]:
-            return coll
+        if _is_wgt_or_lights_collection(coll.name):
+            continue
+        return coll
     for coll in bpy.data.collections:
+        c_low = coll.name.lower()
+        if c_low.startswith("wgt") or (c_low.startswith("wgts_") and c_low != "wgts_facerig"):
+            continue
         if coll.name.lower() not in ["lights", "wgt", "wgts", "eye", "eyes"]:
             return coll
     return None

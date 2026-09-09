@@ -638,6 +638,11 @@ def rig_character(
         except Exception:
             pass
         rigifyr.name = char_name + "Rig"
+    try:
+        from setup_wizard.ui.character_settings_utils import stamp_rig_game
+        stamp_rig_game(rigifyr, "NEVERNESS_TO_EVERNESS", char_name)
+    except Exception:
+        pass
 
     if rigifyr:
         if "torso" in rigifyr.pose.bones:
@@ -719,22 +724,27 @@ def rig_character(
             except Exception:
                 pass
 
-    # Move widget objects (WGT-*) to hidden "wgt" collection
-    widget_keywords = ["head-control-shape", "root plate", "eye circle", "eye controller", "WGT-"]
-    for obj_item in list(bpy.data.objects):
-        if any(keyword in obj_item.name for keyword in widget_keywords):
-            move_into_collection(obj_item.name, "wgt")
-            try:
-                obj_item.hide_viewport = True
-                obj_item.hide_render = True
-            except:
-                pass
+    # Move widget objects into per-character WGTS_<Char> (Append-safe, no global wgt)
+    try:
+        from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+        isolate_wgts_for_character(rigifyr, char_name)
+    except Exception as e_wgts:
+        print(f"[NTE RIG] WGTS isolation notice: {e_wgts}")
+        widget_keywords = ["head-control-shape", "root plate", "eye circle", "eye controller", "WGT-"]
+        for obj_item in list(bpy.data.objects):
+            if any(keyword in obj_item.name for keyword in widget_keywords):
+                move_into_collection(obj_item.name, "wgt")
+                try:
+                    obj_item.hide_viewport = True
+                    obj_item.hide_render = True
+                except:
+                    pass
 
-    wgt_coll = bpy.data.collections.get("wgt")
-    if wgt_coll:
-        wgt_coll.hide_viewport = True
-        wgt_coll.hide_select = True
-        wgt_coll.hide_render = True
+        wgt_coll = bpy.data.collections.get("wgt")
+        if wgt_coll:
+            wgt_coll.hide_viewport = True
+            wgt_coll.hide_select = True
+            wgt_coll.hide_render = True
 
     # Update Rigify UI script to standard Genshin layout with stars and version
     modify_and_run_rig_ui_script(rigifyr, original_name, char_name=char_name)

@@ -760,6 +760,12 @@ def rig_character(
         pass
     if "rigify" in bpy.data.objects:
         bpy.data.objects["rigify"].name = char_name + "Rig"
+    try:
+        from setup_wizard.ui.character_settings_utils import stamp_rig_game
+        _rig = bpy.data.objects.get(char_name + "Rig") or rigifyr
+        stamp_rig_game(_rig, "HONKAI_STAR_RAIL", char_name)
+    except Exception:
+        pass
 
     if is_version_4:
         setup_standard_bone_collections(rigifyr, is_version_4)
@@ -800,61 +806,96 @@ def rig_character(
             except:
                 pass
 
-    # Move widget objects (head-control-shape, root plate, WGT-*) to hidden "wgt" collection
-    widget_keywords = [
-        "head-control-shape", "root plate", "eye circle", "eye controller", "WGT-"
-    ]
-    for obj in list(bpy.data.objects):
-        if any(keyword in obj.name for keyword in widget_keywords):
-            move_into_collection(obj.name, "wgt")
-            try:
-                obj.hide_viewport = True
-                obj.hide_render = True
-            except:
-                pass
+    # Genshin-style: per-character head/light empties (multi-char + Append safe).
+    # Head* go to WGTS_<Char> via isolation below (prefix match covers _Char suffix).
+    # Light Direction stays in the character collection.
+    def get_and_rename_empty(empty_name):
+        obj = bpy.data.objects.get(empty_name)
+        if obj:
+            obj.name = f"{empty_name}_{char_name}"
+            return obj.name
+        return None
 
-    wgt_coll = bpy.data.collections.get("wgt")
-    if wgt_coll:
-        wgt_coll.hide_viewport = True
-        wgt_coll.hide_select = True
-        wgt_coll.hide_render = True
+    get_and_rename_empty("Face Light Direction")
+    get_and_rename_empty("Head Driver")
+    get_and_rename_empty("Head Origin")
+    get_and_rename_empty("Head Forward")
+    get_and_rename_empty("Head Up")
+    new_name = get_and_rename_empty("Main Light Direction")
+    if new_name:
+        move_into_collection(new_name, char_name)
+    new_name = get_and_rename_empty("Light Direction")
+    if new_name:
+        move_into_collection(new_name, char_name)
 
+    # Head ChildOf inverse BEFORE isolation (object must be visible/accessible
+    # in the view layer for the operator to evaluate).
     try:
-        def find_layer_coll(lc, name):
-            if lc.name == name:
-                return lc
-            for child in lc.children:
-                res = find_layer_coll(child, name)
-                if res:
-                    return res
-            return None
-        wgt_lc = find_layer_coll(bpy.context.view_layer.layer_collection, "wgt")
-        if wgt_lc:
-            wgt_lc.exclude = True
-    except:
-        pass
-
-    # Remove empty WGTS collections left by Rigify
-    for coll in list(bpy.data.collections):
-        if coll.name.startswith("WGTS"):
-            if len(coll.objects) == 0 and len(coll.children) == 0:
-                try:
-                    bpy.data.collections.remove(coll, do_unlink=True)
-                except:
-                    pass
-
-    try:
-        bpy.data.objects["Face_Mask"].hide_viewport = True
-        bpy.data.objects["Face_Mask"].hide_render = True
-    except:
-        pass
-    try:
-        head_obj = bpy.data.objects.get("Head Origin") or bpy.data.objects.get("Head Driver")
+        head_obj = (
+            bpy.data.objects.get(f"Head Origin_{char_name}")
+            or bpy.data.objects.get(f"Head Driver_{char_name}")
+            or bpy.data.objects.get("Head Origin")
+            or bpy.data.objects.get("Head Driver")
+        )
         if head_obj:
             saved_mat = head_obj.matrix_world.copy()
             bpy.context.view_layer.objects.active = head_obj
             bpy.ops.constraint.childof_set_inverse(constraint="Child Of", owner='OBJECT')
             head_obj.matrix_world = saved_mat
+    except Exception:
+        pass
+
+    # Move widget objects into per-character WGTS_<Char> (Append-safe, no global wgt)
+    try:
+        from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+        isolate_wgts_for_character(rigifyr, char_name)
+    except Exception as e_wgts:
+        print(f"[HSR RIG] WGTS isolation notice: {e_wgts}")
+        widget_keywords = [
+            "head-control-shape", "root plate", "eye circle", "eye controller", "WGT-"
+        ]
+        for obj in list(bpy.data.objects):
+            if any(keyword in obj.name for keyword in widget_keywords):
+                move_into_collection(obj.name, "wgt")
+                try:
+                    obj.hide_viewport = True
+                    obj.hide_render = True
+                except:
+                    pass
+
+        wgt_coll = bpy.data.collections.get("wgt")
+        if wgt_coll:
+            wgt_coll.hide_viewport = True
+            wgt_coll.hide_select = True
+            wgt_coll.hide_render = True
+
+        try:
+            def find_layer_coll(lc, name):
+                if lc.name == name:
+                    return lc
+                for child in lc.children:
+                    res = find_layer_coll(child, name)
+                    if res:
+                        return res
+                return None
+            wgt_lc = find_layer_coll(bpy.context.view_layer.layer_collection, "wgt")
+            if wgt_lc:
+                wgt_lc.exclude = True
+        except:
+            pass
+
+        # Remove empty WGTS collections left by Rigify
+        for coll in list(bpy.data.collections):
+            if coll.name.startswith("WGTS"):
+                if len(coll.objects) == 0 and len(coll.children) == 0:
+                    try:
+                        bpy.data.collections.remove(coll, do_unlink=True)
+                    except:
+                        pass
+
+    try:
+        bpy.data.objects["Face_Mask"].hide_viewport = True
+        bpy.data.objects["Face_Mask"].hide_render = True
     except:
         pass
 
@@ -868,6 +909,14 @@ def rig_character(
             for mod in obj.modifiers:
                 if 'outline' in mod.name.lower() or (mod.type == 'NODES' and mod.node_group and 'outline' in mod.node_group.name.lower()):
                     mod.show_viewport = True
+
+    # Final sweep: catch widgets created after the first isolation
+    # (wm.append duplicates like head-control-shape.001, Rigify UI run, etc.)
+    try:
+        from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character as _iso_final
+        _iso_final(rigifyr, char_name)
+    except Exception:
+        pass
 
 
 def move_into_collection(object_name, collection_name):

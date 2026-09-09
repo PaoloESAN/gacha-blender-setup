@@ -1,5 +1,6 @@
 # Author: michael-gh1
 
+import math
 import os
 import bpy
 from bpy.types import Operator
@@ -153,11 +154,37 @@ class GI_OT_SetUpHeadDriver(Operator, CustomOperatorProperties):
         constraint.subtarget = bone_name
 
     def _move_head_driver_system_to_wgt(self, main_obj):
+        # Prefer per-character WGTS_<Char> nested in the rig's collection (Append-safe).
         wgt_coll = None
-        for c in bpy.data.collections:
-            if c.name.startswith("WGTS") or c.name.lower() == "wgt":
-                wgt_coll = c
-                break
+        try:
+            rig = None
+            for con in getattr(main_obj, "constraints", []) or []:
+                if con.type == 'CHILD_OF' and getattr(con, "target", None) is not None:
+                    if getattr(con.target, "type", None) == 'ARMATURE':
+                        rig = con.target
+                        break
+            if rig is None:
+                try:
+                    from setup_wizard.ui.character_settings_utils import resolve_settings_armature
+                    rig = resolve_settings_armature(bpy.context)
+                except Exception:
+                    rig = None
+            if rig is not None:
+                try:
+                    char_tag = rig.get("gacha_character")
+                except Exception:
+                    char_tag = None
+                char_name = char_tag or rig.name.replace("Rig", "")
+                char_coll = rig.users_collection[0] if rig.users_collection else bpy.context.scene.collection
+                from setup_wizard.character_rig_setup.wgts_isolation import get_or_create_char_wgts
+                wgt_coll = get_or_create_char_wgts(char_coll, char_name)
+        except Exception:
+            wgt_coll = None
+        if wgt_coll is None:
+            for c in bpy.data.collections:
+                if c.name.startswith("WGTS") or c.name.lower() == "wgt":
+                    wgt_coll = c
+                    break
         if not wgt_coll:
             wgt_coll = bpy.data.collections.get("wgt") or bpy.data.collections.get("WGTS")
         if not wgt_coll:
@@ -206,7 +233,8 @@ class GI_OT_SetUpHeadDriver(Operator, CustomOperatorProperties):
                 lc.exclude = False
                 changed_lcs.append(lc)
             for child in lc.children:
-                if target_name in child.collection.objects or child.name == "wgt":
+                c_low = child.name.lower()
+                if target_name in child.collection.objects or c_low == "wgt" or c_low.startswith(("wgts", "wgt")):
                     if child.exclude:
                         child.exclude = False
                         changed_lcs.append(child)
@@ -344,6 +372,28 @@ class ZZZ_OT_SetUpHeadDriver(Operator, CustomOperatorProperties):
     def set_inverse(self, obj, constraint_name):
         previous_hide_viewport = getattr(obj, "hide_viewport", False)
         obj.hide_viewport = False
+
+        # Head objects may live in an excluded WGTS_<Char>: temporarily
+        # un-exclude their layer collections so the operator can evaluate
+        # (same system as GI_OT_SetUpHeadDriver).
+        changed_lcs = []
+        def enable_layer_colls(lc, target_name):
+            if lc.exclude:
+                lc.exclude = False
+                changed_lcs.append(lc)
+            for child in lc.children:
+                c_low = child.name.lower()
+                if target_name in child.collection.objects or c_low == "wgt" or c_low.startswith(("wgts", "wgt")):
+                    if child.exclude:
+                        child.exclude = False
+                        changed_lcs.append(child)
+                    enable_layer_colls(child, target_name)
+
+        try:
+            enable_layer_colls(bpy.context.view_layer.layer_collection, obj.name)
+        except Exception:
+            pass
+
         previous_active = bpy.context.view_layer.objects.active
         previous_selected = list(bpy.context.selected_objects)
 
@@ -372,6 +422,92 @@ class ZZZ_OT_SetUpHeadDriver(Operator, CustomOperatorProperties):
                 obj.hide_viewport = previous_hide_viewport
             except Exception:
                 pass
+            for lc in changed_lcs:
+                try:
+                    lc.exclude = True
+                except Exception:
+                    pass
+
+
+HEAD_EMPTY_PREFIXES_LOWER = ("head origin", "head driver", "head forward", "head up", "head direction")
+
+
+def _resolve_head_empty_rig(obj):
+    """Owning character rig for a head-driver empty (constraint target, _Char suffix, or parent chain)."""
+    try:
+        seen = set()
+        current = obj
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            for con in getattr(current, "constraints", []) or []:
+                if con.type == 'CHILD_OF' and getattr(con, "target", None) is not None:
+                    if getattr(con.target, "type", None) == 'ARMATURE':
+                        return con.target
+            try:
+                base = current.name
+            except Exception:
+                base = ""
+            for prefix in ("Head Origin_", "Head Driver_", "Head Forward_", "Head Up_", "Head Direction_"):
+                if base.startswith(prefix):
+                    char = base[len(prefix):]
+                    rig = bpy.data.objects.get(f"{char}Rig") or bpy.data.objects.get(char)
+                    if rig is not None and getattr(rig, "type", None) == 'ARMATURE':
+                        return rig
+                    break
+            # Children like Head Forward_Bone inherit the rig from their parent
+            # (e.g. parented under Head Origin_<Char>).
+            try:
+                current = getattr(current, "parent", None)
+            except Exception:
+                current = None
+    except Exception:
+        pass
+    return None
+
+
+def _move_head_empties_to_char_wgts(objs):
+    """Moves per-character head-driver empties into their rig's WGTS_<Char> (Append-safe).
+
+    Same system as HSR/Genshin: Head* travels with the character, only scene-global
+    lighting stays in 'lights'. Returns the set of moved objects.
+    """
+    moved = set()
+    try:
+        from setup_wizard.character_rig_setup.wgts_isolation import get_or_create_char_wgts
+    except Exception:
+        return moved
+    for obj in list(objs or []):
+        try:
+            o_low = obj.name.lower()
+        except Exception:
+            continue
+        if not any(o_low.startswith(p) for p in HEAD_EMPTY_PREFIXES_LOWER):
+            continue
+        rig = _resolve_head_empty_rig(obj)
+        if rig is None:
+            continue
+        try:
+            char_tag = rig.get("gacha_character")
+        except Exception:
+            char_tag = None
+        char_name = char_tag or rig.name.replace("Rig", "")
+        char_coll = rig.users_collection[0] if rig.users_collection else bpy.context.scene.collection
+        try:
+            wgts = get_or_create_char_wgts(char_coll, char_name)
+        except Exception:
+            continue
+        try:
+            if obj.name not in wgts.objects:
+                wgts.objects.link(obj)
+            for coll in list(obj.users_collection):
+                if coll != wgts:
+                    coll.objects.unlink(obj)
+            obj.hide_viewport = True
+            obj.hide_render = True
+            moved.add(obj)
+        except Exception:
+            continue
+    return moved
 
 
 def move_lighting_and_head_driver_to_lights(main_obj=None):
@@ -413,6 +549,13 @@ def move_lighting_and_head_driver_to_lights(main_obj=None):
                 break
 
     target_objs = {obj for obj in target_objs if "light direction" not in obj.name.lower() and "colorwheel" not in obj.name.lower()}
+
+    # Per-character head-driver empties travel with the character (WGTS_<Char>),
+    # like HSR/Genshin — only scene-global lighting stays in 'lights'.
+    try:
+        target_objs -= _move_head_empties_to_char_wgts(target_objs)
+    except Exception:
+        pass
 
     for obj in target_objs:
         if obj.name not in lights_coll.objects:
@@ -643,33 +786,39 @@ def setup_ake_head_driver_system(context=None):
     if not hc:
         return
 
-    # 1. Unparent and clear previous transforms
+    # The .blend already carries the correct HC/HF/HR rotation/scale/offsets:
+    # do not touch anything, only move the system to the head preserving transforms.
+    context.view_layer.update()
+    hc_world_before = hc.matrix_world.copy()
+    children_world = {}
     for obj in [hf, hr]:
         if obj:
-            obj.parent = None
-            obj.matrix_world.identity()
+            children_world[obj.name] = obj.matrix_world.copy()
 
     hc.parent = None
     for c in list(hc.constraints):
         hc.constraints.remove(c)
 
-    # 2. Position HC at head center
-    hc.location = head_world_pos
-    hc.rotation_euler = (0, 0, 0)
-    hc.scale = (0.28, 0.28, 0.28)
+    # 2. Move HC to the head center and apply rotation (90, -90, -180) deg.
+    # HF/HR inherit it as children: their local transforms are left untouched.
+    hc.matrix_world = hc_world_before
+    hc.matrix_world.translation = head_world_pos
+    hc.rotation_mode = 'XYZ'
+    hc.rotation_euler = (
+        math.radians(90.0),
+        math.radians(-90.0),
+        math.radians(-180.0),
+    )
+    context.view_layer.update()
 
-    # 3. Position HF and HR (swapped)
-    if hf:
-        hf.parent = hc
-        hf.location = (1.0, 0.0, 0.0)
-        hf.rotation_euler = (0, 0, 0)
-        hf.scale = (1.0, 1.0, 1.0)
-
-    if hr:
-        hr.parent = hc
-        hr.location = (0.0, 0.0, -1.0)
-        hr.rotation_euler = (0, 0, 0)
-        hr.scale = (1.0, 1.0, 1.0)
+    # 3. Ensure parenting to HC without altering .blend transforms
+    for obj in [hf, hr]:
+        if not obj:
+            continue
+        if obj.parent != hc:
+            obj.parent = hc
+            obj.matrix_world = children_world[obj.name]
+    context.view_layer.update()
 
     # 4. Add Child Of constraint to HC and call childof_set_inverse
     con = hc.constraints.new('CHILD_OF')
@@ -737,12 +886,35 @@ def organize_ake_lighting_collections(context=None, arm=None):
     if not char_coll:
         char_coll = context.scene.collection
 
-    # 3. Resolve WGTS collection (e.g. WGTS_Armature, WGTS_Pelica, etc.)
+    # 3. Resolve per-character WGTS collection (e.g. WGTS_Pelica) nested in char_coll.
+    # Never use a global WGTS/wgt: that pulls every character's widgets on Append.
     wgts_coll = None
-    for c in bpy.data.collections:
-        if c.name.startswith("WGTS_") or c.name.startswith("WGTS") or c.name.lower() == "wgt":
-            wgts_coll = c
-            break
+    if char_coll is not None and char_coll.name not in ("Collection", "Master Collection", "Scene Collection"):
+        wgts_name = f"WGTS_{char_coll.name}"
+        wgts_coll = bpy.data.collections.get(wgts_name)
+        if not wgts_coll:
+            wgts_coll = bpy.data.collections.new(wgts_name)
+        if wgts_coll.name not in char_coll.children:
+            try:
+                char_coll.children.link(wgts_coll)
+            except Exception:
+                pass
+        if wgts_coll.name in context.scene.collection.children:
+            try:
+                context.scene.collection.children.unlink(wgts_coll)
+            except Exception:
+                pass
+        try:
+            wgts_coll.hide_viewport = True
+            wgts_coll.hide_select = True
+            wgts_coll.hide_render = True
+        except Exception:
+            pass
+    if wgts_coll is None:
+        for c in bpy.data.collections:
+            if c.name.startswith("WGTS_") or c.name.startswith("WGTS") or c.name.lower() == "wgt":
+                wgts_coll = c
+                break
 
     # 4. Move Light object directly into char_coll (alongside Rig, FaceRig, Meshes)
     if light_obj and char_coll:

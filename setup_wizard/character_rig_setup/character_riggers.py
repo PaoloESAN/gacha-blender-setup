@@ -335,9 +335,25 @@ class HonkaiStarRailCharacterRigger(CharacterRigger):
 
             print(f"[FACE RIG] Successfully imported/found FaceRig armature: '{facerig_obj.name}'")
 
-            # Move isaac FaceRig armature to Armature collection, planes to WGTS, and remove empty collection
+            # Move isaac FaceRig armature to character collection, planes to per-character WGTS (Append-safe)
             target_armature_coll = body_rig.users_collection[0] if body_rig.users_collection else bpy.context.scene.collection
-            wgt_coll = bpy.data.collections.get("WGTS") or bpy.data.collections.get("WGTS_FaceRig") or bpy.data.collections.get("wgt") or bpy.data.collections.new("WGTS")
+            try:
+                _char_tag = body_rig.get("gacha_character")
+            except Exception:
+                _char_tag = None
+            _char_name = _char_tag or target_armature_coll.name or body_rig.name.replace("Rig", "")
+            try:
+                from setup_wizard.character_rig_setup.wgts_isolation import get_or_create_char_wgts
+                wgt_coll = get_or_create_char_wgts(target_armature_coll, _char_name)
+            except Exception:
+                wgt_coll = bpy.data.collections.get(f"WGTS_{_char_name}")
+                if wgt_coll is None:
+                    wgt_coll = bpy.data.collections.get("WGTS") or bpy.data.collections.get("WGTS_FaceRig") or bpy.data.collections.get("wgt") or bpy.data.collections.new(f"WGTS_{_char_name}")
+                    try:
+                        if wgt_coll.name not in target_armature_coll.children:
+                            target_armature_coll.children.link(wgt_coll)
+                    except Exception:
+                        pass
 
             if facerig_obj and target_armature_coll:
                 if facerig_obj.name not in target_armature_coll.objects:
@@ -357,18 +373,32 @@ class HonkaiStarRailCharacterRigger(CharacterRigger):
                     if coll != wgt_coll:
                         coll.objects.unlink(p_obj)
 
-            # Unlink wgt_coll from Scene Collection so it is unlinked from the Outliner
-            for parent_coll in list(bpy.data.collections):
-                if wgt_coll.name in parent_coll.children:
-                    try:
-                        parent_coll.children.unlink(wgt_coll)
-                    except Exception:
-                        pass
-            if wgt_coll.name in bpy.context.scene.collection.children:
+            # Keep per-character WGTS nested in the character collection (Append brings it along).
+            # Only orphan legacy global WGTS from the Outliner.
+            if wgt_coll.name.startswith("WGTS_"):
                 try:
-                    bpy.context.scene.collection.children.unlink(wgt_coll)
+                    if wgt_coll.name not in target_armature_coll.children:
+                        target_armature_coll.children.link(wgt_coll)
                 except Exception:
                     pass
+                try:
+                    if wgt_coll.name in bpy.context.scene.collection.children:
+                        bpy.context.scene.collection.children.unlink(wgt_coll)
+                except Exception:
+                    pass
+            else:
+                # Unlink wgt_coll from Scene Collection so it is unlinked from the Outliner
+                for parent_coll in list(bpy.data.collections):
+                    if wgt_coll.name in parent_coll.children:
+                        try:
+                            parent_coll.children.unlink(wgt_coll)
+                        except Exception:
+                            pass
+                if wgt_coll.name in bpy.context.scene.collection.children:
+                    try:
+                        bpy.context.scene.collection.children.unlink(wgt_coll)
+                    except Exception:
+                        pass
 
             if appended_coll:
                 try:
@@ -447,6 +477,17 @@ class HonkaiStarRailCharacterRigger(CharacterRigger):
             setup_isaac_face_rig(armature)
         except Exception as e:
             print(f"Isaac face rig skipped: {e}")
+
+        # Final sweep: planes (Plane.001...) + Head Origin into WGTS_<Char>
+        try:
+            from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+            try:
+                _cn = armature.get("gacha_character")
+            except Exception:
+                _cn = None
+            isolate_wgts_for_character(armature, _cn or armature.name.replace("Rig", ""))
+        except Exception as e_iso:
+            print(f"[HSR RIG] Final WGTS sweep notice: {e_iso}")
 
         def refresh_light_vectors_modifiers():
             char_name = armature.name.replace("Rig", "")
@@ -808,6 +849,15 @@ class NevernessToEvernessCharacterRigger(CharacterRigger):
             from setup_wizard.character_rig_setup.rig_ui_utils import apply_hair_and_clothes_physics, find_target_armature
             target_rig = find_target_armature(self.context, armature)
             apply_hair_and_clothes_physics(target_rig, self.context)
+
+        # Final sweep: merge dupe WGTS_* into the single canonical WGTS_<Char>
+        try:
+            from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+            from setup_wizard.ui.character_settings_utils import resolve_character_name
+            _cn = resolve_character_name(armature, getattr(armature, "name", "").replace("Rig", ""))
+            isolate_wgts_for_character(armature, _cn)
+        except Exception as e_iso:
+            print(f"[NTE RIG] Final WGTS sweep notice: {e_iso}")
 
         cache_enabled = self.context.window_manager.cache_enabled
         if cache_enabled and filepath:

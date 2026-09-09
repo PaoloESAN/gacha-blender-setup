@@ -837,6 +837,11 @@ def rig_wuthering_waves_character(context=None):
             RigArmatureObj.name = RigArmature
         if RigArmatureObj.data:
             RigArmatureObj.data.name = RigArmature
+        try:
+            from setup_wizard.ui.character_settings_utils import stamp_rig_game
+            stamp_rig_game(RigArmatureObj, "WUTHERING_WAVES", char_base_name if 'char_base_name' in locals() else None)
+        except Exception:
+            pass
 
         # Link RigArmatureObj to character's collection (e.g. Chun) and move scene objects into character collection
         orig_arm_obj = bpy.data.objects.get(OrigArmature) or armature
@@ -1270,26 +1275,33 @@ def rig_wuthering_waves_character(context=None):
 
             bpy.ops.object.mode_set(mode='OBJECT')
 
-            # Move Widgets to WGTS collection
-            wgts_collection = None
-            for col in bpy.data.collections:
-                if col.name.startswith("WGTS_RIG-") or col.name.startswith("WGTS"):
-                    wgts_collection = col
-                    break
-            if not wgts_collection:
-                wgts_collection = bpy.data.collections.new("WGTS_Custom")
-                context.scene.collection.children.link(wgts_collection)
+            # Move Widgets to per-character WGTS_<Char> nested in char collection (Append-safe)
+            try:
+                from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+                _char_coll = char_collection if 'char_collection' in locals() else None
+                _char_name = char_base_name if 'char_base_name' in locals() else None
+                isolate_wgts_for_character(RigArmatureObj, _char_name, _char_coll)
+            except Exception as e_wgts:
+                print(f"[WUWA RIG] WGTS isolation notice: {e_wgts}")
+                wgts_collection = None
+                for col in bpy.data.collections:
+                    if col.name.startswith("WGTS_RIG-") or col.name.startswith("WGTS"):
+                        wgts_collection = col
+                        break
+                if not wgts_collection:
+                    wgts_collection = bpy.data.collections.new("WGTS_Custom")
+                    context.scene.collection.children.link(wgts_collection)
 
-            for n in ["WGT-rig_eyes", "WGT-rig_eye.R", "WGT-rig_eye.L"]:
-                o = bpy.data.objects.get(n)
-                if o:
-                    if o.name not in wgts_collection.objects:
-                        wgts_collection.objects.link(o)
-                    for col in list(o.users_collection):
-                        if col != wgts_collection:
-                            col.objects.unlink(o)
+                for n in ["WGT-rig_eyes", "WGT-rig_eye.R", "WGT-rig_eye.L"]:
+                    o = bpy.data.objects.get(n)
+                    if o:
+                        if o.name not in wgts_collection.objects:
+                            wgts_collection.objects.link(o)
+                        for col in list(o.users_collection):
+                            if col != wgts_collection:
+                                col.objects.unlink(o)
 
-            wgts_collection.hide_viewport = True
+                wgts_collection.hide_viewport = True
 
             # IK Pole property
             ik_pole_targets = ["upper_arm_parent.L", "upper_arm_parent.R", "thigh_parent.L", "thigh_parent.R"]

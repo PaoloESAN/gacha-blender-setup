@@ -581,6 +581,26 @@ def purge_previous(armature):
 
 
 def get_widget_collection(name="WGTS_FaceRig"):
+    # Prefer per-character WGTS_<Char> (Append-safe): resolve from active/selected rig
+    try:
+        from setup_wizard.ui.character_settings_utils import resolve_settings_armature, resolve_character_name
+        arm = resolve_settings_armature(bpy.context)
+        if arm is not None:
+            char_name = resolve_character_name(arm)
+            if char_name:
+                per_char = bpy.data.collections.get(f"WGTS_{char_name}")
+                if per_char is not None:
+                    return per_char
+                # If the rig already lives in a character collection, create nested WGTS there
+                try:
+                    from setup_wizard.character_rig_setup.wgts_isolation import get_or_create_char_wgts, get_char_collection
+                    char_coll = get_char_collection(arm, char_name)
+                    if char_coll is not None:
+                        return get_or_create_char_wgts(char_coll, char_name)
+                except Exception:
+                    pass
+    except Exception:
+        pass
     for name_candidate in ("WGTS", "wgt", "WGTS_FaceRig"):
         coll = bpy.data.collections.get(name_candidate)
         if coll:

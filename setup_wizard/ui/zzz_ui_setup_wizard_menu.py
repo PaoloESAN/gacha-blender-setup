@@ -596,23 +596,11 @@ class ZZZ_PT_Rig_Character_Settings(Panel):
         # Only show when using Kythera's shader
         if getattr(context.scene, "zzz_shader_type", "KYTHERA") != "KYTHERA":
             return False
-
-        obj = context.active_object or context.object
-        if not obj:
-            return False
-
-        is_rig = (obj.type == 'ARMATURE') or (obj.type == 'MESH' and obj.parent and obj.parent.type == 'ARMATURE')
-        if not is_rig:
-            is_zzz_mesh = obj.type == 'MESH' and any(s.material and ("zzz" in s.material.name.lower() or "kythera" in s.material.name.lower()) for s in obj.material_slots)
-            if not is_zzz_mesh:
-                return False
-
-        if getattr(context.scene, "game_type_dropdown", None) == GameType.ZENLESS_ZONE_ZERO.name:
-            return True
-
-        if any(m.name.startswith("ZZZ ") or "kythera" in m.name.lower() for m in bpy.data.materials):
-            return True
-
+        try:
+            from setup_wizard.ui.character_settings_utils import is_game_armature
+            return is_game_armature(context, "ZENLESS_ZONE_ZERO")
+        except Exception:
+            pass
         return False
 
     def draw(self, context):

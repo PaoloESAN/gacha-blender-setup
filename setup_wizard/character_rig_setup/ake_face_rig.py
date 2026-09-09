@@ -161,14 +161,30 @@ def setup_endfield_isaac_face_rig(body_rig, context=None):
 
     print(f"[AKE FACE RIG] Using FaceRig armature: '{facerig_obj.name}'")
 
-    # Organize collections: move FaceRig armature to character collection, widget planes to wgt/WGTS
+    # Organize collections: FaceRig armature to character collection,
+    # widget planes to per-character WGTS_<Char> nested inside it (Append-safe)
     target_armature_coll = body_rig.users_collection[0] if body_rig.users_collection else context.scene.collection
-    wgt_coll = (
-        bpy.data.collections.get("wgt")
-        or bpy.data.collections.get("WGTS")
-        or bpy.data.collections.get("WGTS_FaceRig")
-        or bpy.data.collections.new("wgt")
-    )
+    char_name = target_armature_coll.name if target_armature_coll != context.scene.collection else (body_rig.name.replace("Rig", "") or "Character")
+    wgts_name = f"WGTS_{char_name}"
+    wgt_coll = bpy.data.collections.get(wgts_name)
+    if not wgt_coll:
+        wgt_coll = bpy.data.collections.new(wgts_name)
+    if wgt_coll.name not in target_armature_coll.children:
+        try:
+            target_armature_coll.children.link(wgt_coll)
+        except Exception:
+            pass
+    if wgt_coll.name in context.scene.collection.children:
+        try:
+            context.scene.collection.children.unlink(wgt_coll)
+        except Exception:
+            pass
+    try:
+        wgt_coll.hide_viewport = True
+        wgt_coll.hide_select = True
+        wgt_coll.hide_render = True
+    except Exception:
+        pass
 
     if facerig_obj and target_armature_coll:
         if facerig_obj.name not in target_armature_coll.objects:

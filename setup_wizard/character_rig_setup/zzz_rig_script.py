@@ -981,6 +981,12 @@ def rig_character(
         pass
     if "rigify" in bpy.data.objects:
         bpy.data.objects["rigify"].name = char_name + "Rig"
+    try:
+        from setup_wizard.ui.character_settings_utils import stamp_rig_game
+        _rig = bpy.data.objects.get(char_name + "Rig")
+        stamp_rig_game(_rig, "ZENLESS_ZONE_ZERO", char_name)
+    except Exception:
+        pass
                 
     bpy.ops.object.mode_set(mode='POSE')   
     bpy.ops.pose.select_all(action='DESELECT')
@@ -1313,6 +1319,10 @@ def rig_character(
 
     layerColl.exclude = True
 
+    # NOTE: no aislar WGTS aquí (como en HSR): el inverse del Head Driver y el
+    # código posterior (appends wgt.00X, sliders) necesitan los objetos visibles.
+    # El barrido final al cierre de rig_character consolida todo en WGTS_<Char>.
+
     # Make our lives easier, display the bones as sticks and make sure we can view from front.    
     bpy.data.armatures[original_name].display_type = 'STICK'
     bpy.data.objects[char_name+"Rig"].show_in_front = True
@@ -1428,8 +1438,8 @@ def rig_character(
     this_obj.pose.bones["shoulder.L"].custom_shape_scale_xyz = (1.6,1.6,1.6)
     this_obj.pose.bones["shoulder.R"].custom_shape_scale_xyz = (1.6,1.6,1.6)
 
-    this_obj.pose.bones["foot_heel_ik.L"].custom_shape_translation = (0.0,0.06,0.0)
-    this_obj.pose.bones["foot_heel_ik.R"].custom_shape_translation = (0.0,0.06,0.0)
+    this_obj.pose.bones["foot_heel_ik.L"].custom_shape_translation = (0.0,0.0,0.0)
+    this_obj.pose.bones["foot_heel_ik.R"].custom_shape_translation = (0.0,0.0,0.0)
 
     this_obj.pose.bones["foot_spin_ik.R"].custom_shape_translation = (0.0,-0.05,0.02)
     this_obj.pose.bones["foot_spin_ik.L"].custom_shape_translation = (0.0,-0.05,0.02)
@@ -1956,6 +1966,43 @@ def rig_character(
     
     armature.edit_bones['ik-target-R'].head = armature.edit_bones['foot_tweak.R'].head.copy()
     armature.edit_bones['ik-target-R'].tail = armature.edit_bones['foot_tweak.R'].tail.copy()
+
+    # HEEL: move foot_heel_ik back to the anatomical heel like Miyabi Foot_Roll.
+    # Minimal/safe: only translate the control (orientation, parent and MCH
+    # constraints untouched, widget shape untouched), so rest pose cannot deform:
+    # the MCH chain copies heel LOCAL rotation only, and it stays zero at rest.
+    for _side in ('.L', '.R'):
+        _heel = f'foot_heel_ik{_side}'
+        _foot_ik = f'foot_ik{_side}'
+        _spin = f'foot_spin_ik{_side}'
+        if _heel in armature.edit_bones and _foot_ik in armature.edit_bones:
+            try:
+                _hb = armature.edit_bones[_heel]
+                _ankle = armature.edit_bones[_foot_ik].head.copy()
+                if _spin in armature.edit_bones:
+                    _ball = armature.edit_bones[_spin].head.copy()
+                else:
+                    _ball = armature.edit_bones[_foot_ik].tail.copy()
+                _y_span = _ankle.y - _ball.y
+                _z_span = _ankle.z - _ball.z
+                if abs(_y_span) < 1e-5:
+                    _toe = f'toe_ik{_side}'
+                    if _toe in armature.edit_bones:
+                        _ball = armature.edit_bones[_toe].head.copy()
+                        _y_span = _ankle.y - _ball.y
+                        _z_span = _ankle.z - _ball.z
+                if abs(_y_span) < 1e-5:
+                    continue
+                _vec = _hb.tail - _hb.head
+                _heel_y = _ankle.y + _y_span * 0.88
+                if abs(_z_span) > 1e-5:
+                    _heel_z = _ankle.z - _z_span * 0.37
+                else:
+                    _heel_z = _hb.head.z
+                _hb.head = Vector((_ankle.x, _heel_y, _heel_z))
+                _hb.tail = _hb.head + _vec
+            except Exception as _e:
+                print(f"[ZZZ RIG] heel translate skipped {_heel}: {_e}")
     
     foot_L_x_diff = armature.edit_bones['ik-sub-pivot-L'].tail.x - armature.edit_bones['foot_spin_ik.L'].tail.x
     foot_R_x_diff = armature.edit_bones['ik-sub-pivot-R'].tail.x - armature.edit_bones['foot_spin_ik.R'].tail.x
@@ -3713,6 +3760,36 @@ def rig_character(
     def generate_string_for_head_controller_slider():
         return '\n        if is_selected({"head-controller"}):\n            layout.prop(pose_bones["plate-settings"], \'["Use Head Controller"]\', text="Use Head Tracker Controller", slider=True)\n        if is_selected({"head"}):\n            layout.prop(pose_bones["plate-settings"], \'["Use Head Controller"]\', text="Use Head Tracker Controller", slider=True)'
 
+    def generate_string_for_tail_ik(ik_name, chain_bones):
+        sel = "{" + ", ".join("'" + b + "'" for b in [ik_name] + chain_bones) + "}"
+        return ("\n        if is_selected(" + sel + "):"
+                "\n            if \"" + ik_name + "\" in pose_bones and \"IK\" in pose_bones[\"" + ik_name + "\"]:"
+                "\n                layout.prop(pose_bones[\"" + ik_name + "\"], '[\"IK\"]', text='FK -> IK', slider=True)"
+                "\n            if \"" + ik_name + "\" in pose_bones and \"Flexibility\" in pose_bones[\"" + ik_name + "\"]:"
+                "\n                layout.prop(pose_bones[\"" + ik_name + "\"], '[\"Flexibility\"]', text='Flexibility', slider=True)")
+
+    # Tail IK sliders (same system as limb gears: show when tail bones selected).
+    # Chain members resolved by walking parents from the constrained tip.
+    tail_splices = []
+    try:
+        for _ik_name, _last_name, _chain_len in tail_ik_info:
+            _members = []
+            try:
+                _b = this_obj.pose.bones.get(_last_name)
+                for _i in range(int(_chain_len)):
+                    if _b is None:
+                        break
+                    if not _b.name.startswith(("DEF-", "MCH-", "ORG-")):
+                        _members.append(_b.name)
+                    _b = _b.parent
+            except Exception:
+                pass
+            tail_splices.append(
+                {"divider": "num_rig_separators[0] += 1",
+                 "text": generate_string_for_tail_ik(_ik_name, _members)})
+    except Exception as e_tail_ui:
+        print(f"[TAIL UI] splice notice: {e_tail_ui}")
+
     splices = [
         {"divider": "num_rig_separators[0] += 1", "text": generate_string_for_parent_switch("forearm_tweak-pin.L")},
         {"divider": "num_rig_separators[0] += 1", "text": generate_string_for_limb_pin("forearm_tweak-pin.L", "upper_arm_parent.L", "forearm_tweak.L", "Elbow Pin")},
@@ -3730,6 +3807,7 @@ def rig_character(
         {"divider": "num_rig_separators[0] += 1", "text": generate_string_for_head_controller_slider()},
         {"divider": "num_rig_separators[0] += 1", "text": generate_string_for_parent_switch("head-controller")},
     ]
+    splices.extend(tail_splices)
 
     modify_and_run_rig_ui_script(this_obj, original_name, char_name=char_name, extra_splices=splices)
     
@@ -4282,6 +4360,36 @@ def rig_character(
     fast_bone_move(all_skirt_ctrl_bones, 22, "Clothes")
     fast_bone_move(all_skirt_tip_bones, 25, "Other")
 
+    # Dedicated Tails bone collection (Rig Layers): tail chains + tail_ik controls.
+    # Runs after loop_place_physics (which drops "tail" bones into Clothes).
+    # Ponytail/twintail stay in Hair; deform/mechanism bones stay out.
+    if is_version_4 and hasattr(this_obj.data, "collections"):
+        try:
+            tails_coll = this_obj.data.collections.get("Tails") or this_obj.data.collections.new("Tails")
+            try:
+                tails_coll.is_visible = True
+            except Exception:
+                pass
+            for b in this_obj.data.bones:
+                bn = b.name
+                bl = bn.lower()
+                if "tail" not in bl:
+                    continue
+                if bn.startswith(("DEF-", "MCH-", "ORG-")):
+                    continue
+                if any(k in bl for k in ("hook", "tweak", "eyetrack", "pendant", "hair", "ponytail", "twintail", "eardrop", "ahoge")):
+                    continue
+                tails_coll.assign(b)
+                for _oc in ("Other", "Clothes"):
+                    _c = this_obj.data.collections.get(_oc)
+                    if _c:
+                        try:
+                            _c.unassign(b)
+                        except Exception:
+                            pass
+        except Exception as e_tails:
+            print(f"[TAILS] Bone collection notice: {e_tails}")
+
     # Final sweep: dissolve any facerig or props collections into Face and Weapon, hooks to Other, all roots to Root
     if is_version_4 and hasattr(this_obj.data, "collections"):
         colls = this_obj.data.collections
@@ -4365,13 +4473,19 @@ def rig_character(
             pb_last = this_obj.pose.bones.get(last_name)
             pb_ik = this_obj.pose.bones.get(ik_name)
             if pb_last and pb_ik:
-                # Add IK constraint to the last bone of the tail chain (active by default)
+                # Add IK constraint to the last bone of the tail chain (active by default).
+                # use_tail: the tip aims at the controller instead of collapsing onto it
+                # (fixes the "weird spin" when reaching for the IK target).
                 ik_c = pb_last.constraints.get("Tail_IK") or pb_last.constraints.new('IK')
                 ik_c.name = "Tail_IK"
                 ik_c.target = this_obj
                 ik_c.subtarget = ik_name
                 ik_c.chain_count = chain_len
                 ik_c.use_rotation = True
+                try:
+                    ik_c.use_tail = True
+                except Exception:
+                    pass
                 ik_c.influence = 1.0
 
                 # Configure tail_ik controller with prop cube widget
@@ -4381,37 +4495,94 @@ def rig_character(
                     pb_ik.use_custom_shape_bone_size = False
                     pb_ik.custom_shape_scale_xyz = (0.35, 0.35, 0.35)
 
-                # Custom property for IK influence with driver (1.0 = IK, 0.0 = FK)
-                pb_ik["IK"] = 1.0
-                if "_RNA_UI" not in pb_ik:
-                    pb_ik["_RNA_UI"] = {}
-                pb_ik["_RNA_UI"]["IK"] = {
-                    "min": 0.0,
-                    "max": 1.0,
-                    "soft_min": 0.0,
-                    "soft_max": 1.0,
-                    "description": "Tail IK Influence (1.0 = IK, 0.0 = FK)",
-                    "default": 1.0,
-                }
+                # Custom properties on the tail_ik control, shown in Rig Main
+                # Properties when the bone is selected: IK->FK switch + stiffness.
+                # Limits via id_properties_ui() (official API) so sliders clamp 0..1.
+                def _set_tail_prop(pbone, key, value, description=""):
+                    try:
+                        if key in pbone:
+                            try:
+                                del pbone[key]
+                            except Exception:
+                                pass
+                        pbone[key] = value
+                    except Exception as e_prop:
+                        print(f"[TAIL IK] Property notice for {key}: {e_prop}")
+                        return
+                    try:
+                        ui_data = pbone.id_properties_ui(key)
+                        ui_data.update(
+                            min=0.0, max=1.0,
+                            soft_min=0.0, soft_max=1.0,
+                            description=description, default=value,
+                        )
+                    except Exception:
+                        try:
+                            ui = pbone.get("_RNA_UI")
+                            if ui is None:
+                                pbone["_RNA_UI"] = {}
+                                ui = pbone["_RNA_UI"]
+                            ui[key] = {
+                                "min": 0.0, "max": 1.0,
+                                "soft_min": 0.0, "soft_max": 1.0,
+                                "description": description, "default": value,
+                            }
+                        except Exception as e_ui:
+                            print(f"[TAIL IK] RNA UI notice for {key}: {e_ui}")
+
+                _set_tail_prop(pb_ik, "IK", 1.0, "Tail FK -> IK (1.0 = IK, 0.0 = FK)")
+                _set_tail_prop(pb_ik, "Flexibility", 1.0,
+                               "Tail chain stiffness when following IK (0 = bend freely, 1 = rigid)")
+
+                def _link_prop_driver(drv_holder, data_path_prop, prop_key, var_name="tail_val"):
+                    try:
+                        drv_holder.driver_remove(data_path_prop)
+                    except Exception:
+                        pass
+                    try:
+                        fcu = drv_holder.driver_add(data_path_prop)
+                        drv = fcu.driver if hasattr(fcu, "driver") else fcu
+                        drv.type = 'SCRIPTED'
+                        drv.expression = var_name
+                        var = drv.variables.new()
+                        var.name = var_name
+                        var.type = 'SINGLE_PROP'
+                        target = var.targets[0]
+                        target.id_type = 'OBJECT'
+                        target.id = this_obj
+                        target.data_path = f'pose.bones["{ik_name}"]["{prop_key}"]'
+                        return True
+                    except Exception as e_drv:
+                        print(f"[TAIL IK DRIVER ERROR] {data_path_prop}: {e_drv}")
+                        return False
+
+                _link_prop_driver(ik_c, "influence", "IK", var_name="ik_val")
+
+                # Chain bones: walk parents from the constrained tip so stiffness
+                # drives exactly the IK chain members.
+                chain_bones = []
                 try:
-                    ik_c.driver_remove("influence")
-                    drv = ik_c.driver_add("influence").driver
-                    drv.type = 'AVERAGE'
-                    var = drv.variables.new()
-                    var.name = "ik_val"
-                    var.type = 'SINGLE_PROP'
-                    target = var.targets[0]
-                    target.id_type = 'OBJECT'
-                    target.id = this_obj
-                    target.data_path = f'pose.bones["{ik_name}"]["IK"]'
-                except Exception as e:
-                    print(f"[TAIL IK DRIVER ERROR] {e}")
+                    _b = pb_last
+                    for _i in range(int(chain_len)):
+                        if _b is None:
+                            break
+                        if not _b.name.startswith(("DEF-", "MCH-", "ORG-")):
+                            chain_bones.append(_b.name)
+                        _b = _b.parent
+                except Exception:
+                    pass
+                for _cb_name in chain_bones:
+                    _pb = this_obj.pose.bones.get(_cb_name)
+                    if not _pb:
+                        continue
+                    for _axis in ("ik_stiffness_x", "ik_stiffness_y", "ik_stiffness_z"):
+                        _link_prop_driver(_pb, _axis, "Flexibility", var_name="stiff_val")
 
                 # Assign bone group and color (Torso theme, gold/yellow)
                 assign_bone_to_group(ik_name, "Torso")
 
-                # Place in collections: Torso (IK) (visible by default) and Clothes
-                bone_to_layer(ik_name, 3, "Torso (IK)", "Clothes")
+                # Place in collections: Torso (IK) (visible by default), Tails and Clothes
+                bone_to_layer(ik_name, 3, "Torso (IK)", "Tails")
                 print(f"[TAIL IK] Configured {ik_name} with prop cube widget and IK constraint on {last_name}")
 
     # Write rig log to Blender Text block (ALWAYS, so user can verify code ran)
@@ -4426,6 +4597,21 @@ def rig_character(
     else:
         log_text.write("No warnings or messages recorded.\n")
     log_text.write("\n=== END ===")
+
+    # Final Append-safe sweep: consolidate scene-root wgt / wgt.00X / WGTS leftovers
+    # created later in this function (merge_duplicate_collections, slider appends...)
+    # into WGTS_<Char> nested in the character collection.
+    try:
+        from setup_wizard.character_rig_setup.wgts_isolation import isolate_wgts_for_character
+        _rig_final = bpy.data.objects.get(char_name + "Rig")
+        if _rig_final is None:
+            try:
+                _rig_final = this_obj
+            except Exception:
+                _rig_final = None
+        isolate_wgts_for_character(_rig_final, char_name)
+    except Exception as e_wgts:
+        print(f"[ZZZ RIG] Final WGTS sweep notice: {e_wgts}")
     
 def setup_neck_and_head_follow(neck_follow_value=1.0, head_follow_value=1.0):
     if bpy.context.object and hasattr(bpy.context.object, "pose") and bpy.context.object.pose:
