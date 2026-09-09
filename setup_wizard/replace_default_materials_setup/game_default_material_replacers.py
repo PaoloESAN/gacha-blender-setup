@@ -2109,18 +2109,38 @@ class NevernessToEvernessDefaultMaterialReplacer(GameDefaultMaterialReplacer):
         )
 
 
+def _is_hair_slot(name_lower):
+    return 'hair' in name_lower or '头' in name_lower or 'pelo' in name_lower
+
+
+def _is_face_slot(name_lower):
+    return any(k in name_lower for k in ('face', '面', 'cara', 'head', 'eye', 'eyebrow', 'brow', '眉'))
+
+
+def _fuse_mesh_slots_to_first(obj):
+    """Point every polygon to slot 0 and drop the remaining slots."""
+    mesh = obj.data
+    for p in mesh.polygons:
+        if p.material_index >= 1:
+            p.material_index = 0
+    while len(mesh.materials) > 1:
+        mesh.materials.pop(index=1)
+    try:
+        mesh.update()
+    except Exception:
+        pass
+
+
 def clean_hair_mesh_slots():
     for obj in bpy.context.scene.objects:
         if obj.type == 'MESH' and obj.data and hasattr(obj.data, "polygons"):
             obj_name_lower = obj.name.lower()
             slot_names = [slot.material.name.lower() for slot in obj.material_slots if slot.material]
-            is_hair_mesh = 'hair' in obj_name_lower or any('hair' in s or '头' in s or 'pelo' in s for s in slot_names)
-            if is_hair_mesh and len(obj.material_slots) >= 2:
-                for p in obj.data.polygons:
-                    if p.material_index >= 1:
-                        p.material_index = 0
-                while len(obj.data.materials) > 1:
-                    obj.data.materials.pop(index=1)
+            is_hair_mesh = 'hair' in obj_name_lower or any(_is_hair_slot(s) for s in slot_names)
+            # Only fuse meshes whose slots are ALL hair (e.g. Hair + Hair_T).
+            # Mixed meshes (e.g. Body carrying Body/Weapon/Hair slots) are left untouched.
+            if is_hair_mesh and len(obj.material_slots) >= 2 and slot_names and all(_is_hair_slot(s) for s in slot_names):
+                _fuse_mesh_slots_to_first(obj)
 
 
 def clean_face_mesh_slots():
@@ -2128,17 +2148,11 @@ def clean_face_mesh_slots():
         if obj.type == 'MESH' and obj.data and hasattr(obj.data, "polygons"):
             obj_name_lower = obj.name.lower()
             slot_names = [slot.material.name.lower() for slot in obj.material_slots if slot.material]
-            is_face_mesh = 'face' in obj_name_lower or any('face' in s or '面' in s or 'cara' in s or 'head' in s for s in slot_names)
-            if is_face_mesh and len(obj.material_slots) >= 2:
-                for p in obj.data.polygons:
-                    if p.material_index >= 1:
-                        p.material_index = 0
-                while len(obj.data.materials) > 1:
-                    obj.data.materials.pop(index=1)
-                try:
-                    obj.data.update()
-                except Exception:
-                    pass
+            is_face_mesh = 'face' in obj_name_lower or any(_is_face_slot(s) for s in slot_names)
+            # Only fuse meshes whose slots are ALL face-related (Face/Eye/Eyebrow).
+            # Mixed meshes are left untouched.
+            if is_face_mesh and len(obj.material_slots) >= 2 and slot_names and all(_is_face_slot(s) for s in slot_names):
+                _fuse_mesh_slots_to_first(obj)
 
 
 class WutheringWavesDefaultMaterialReplacer(GameDefaultMaterialReplacer):
