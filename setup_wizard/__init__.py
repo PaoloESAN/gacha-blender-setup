@@ -3,7 +3,7 @@ import os
 bl_info = {
     "name": "Gacha Setup",
     "author": "Mken, OctavoPE, Enthralpy, PaoloESAN",
-    "version": (3, 6, 2),
+    "version": (3, 6, 3),
     "blender": (5, 2, 0),
     "location": "3D View > Sidebar > Genshin Impact / Honkai Star Rail / Zenless Zone Zero / Neverness to Everness / Wuthering Waves / Arknights: Endfield",
     "description": "An addon to streamline the character model setup process for Gacha games in Blender 5.2+",
