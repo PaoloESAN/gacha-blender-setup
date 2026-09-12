@@ -366,7 +366,7 @@ ZZZ_LIGHT_PRESETS = {
         "ambient": (1.0, 1.0, 1.0),
         "lit_tint": (1.0, 1.0, 1.0),
         "lit_brightness": 0.0,
-        "shadow_tint": (1.0, 1.0, 1.0),
+        "shadow_tint": (0.65, 0.65, 0.85),
         "shadow_intensity": 1.0,
         "fake_sss_intensity": 1.0,
         "enable_rim": True,
@@ -394,7 +394,7 @@ ZZZ_LIGHT_PRESETS = {
         "ambient": (1.0, 1.0, 1.0),
         "lit_tint": (1.0, 1.0, 1.0),
         "lit_brightness": 0.2,
-        "shadow_tint": (1.0, 1.0, 1.0),
+        "shadow_tint": (0.75, 0.75, 0.85),
         "shadow_intensity": 1.0,
         "fake_sss_intensity": 1.0,
         "enable_rim": True,
@@ -427,7 +427,7 @@ ZZZ_LIGHT_PRESETS = {
         "fake_sss_intensity": 0.5,
         "enable_rim": True,
         "rim_color": (0.5, 0.7, 1.0),
-        "coverage": 0.9,
+        "coverage": 1.0,
         "brightness": 0.8,
         "left_right": 0.4,
         "up_down": 0.1,
@@ -441,7 +441,7 @@ ZZZ_LIGHT_PRESETS = {
         "fake_sss_intensity": 0.5,
         "enable_rim": True,
         "rim_color": (0.7, 0.8, 0.9),
-        "coverage": 0.8,
+        "coverage": 1.0,
         "brightness": 0.7,
         "left_right": 0.5,
         "up_down": 0.4,
@@ -536,6 +536,7 @@ def update_zzz_kythera_props(self, context=None):
 
     prop_map = {
         "Ambient Tint": ambient_tint,
+        "Overall Tint": ambient_tint,
         "Lit Tint": lit_tint,
         "Lit Brightness": lit_brightness,
         "Shadow Tint": shadow_tint,
@@ -613,7 +614,7 @@ class ZZZ_PT_Rig_Character_Settings(Panel):
         col_light.label(text="Lighting Mode:")
         col_light.prop(scene, "zzz_light_mode", text="")
 
-        # Only show Shading & Tints and Rim Light when in Custom mode ("6")
+        # Only show Shading & Tints when in Custom mode ("6")
         if getattr(scene, "zzz_light_mode", "0") == "6":
             # 2. Shading & Tints
             box_shading = layout.box()
@@ -626,18 +627,18 @@ class ZZZ_PT_Rig_Character_Settings(Panel):
             col_shading.prop(scene, "zzz_shadow_intensity", text="Shadow Intensity", slider=True)
             col_shading.prop(scene, "zzz_fake_sss_intensity", text="Fake SSS Intensity", slider=True)
 
-            # 3. Rim Light Settings
-            box_rim = layout.box()
-            box_rim.label(text="Rim Light", icon="LIGHT_SUN")
-            box_rim.prop(scene, "zzz_enable_rim_light", text="Enable Rim Light")
+        # 3. Rim Light Settings (Separate option below lighting)
+        box_rim = layout.box()
+        box_rim.label(text="Rim Light", icon="LIGHT_SUN")
+        box_rim.prop(scene, "zzz_enable_rim_light", text="Enable Rim Light")
 
-            col_rim = box_rim.column(align=True)
-            col_rim.active = scene.zzz_enable_rim_light
+        col_rim = box_rim.column(align=True)
+        col_rim.active = scene.zzz_enable_rim_light
+        col_rim.prop(scene, "zzz_rim_brightness", text="Brightness", slider=True)
+        col_rim.prop(scene, "zzz_rim_left_right", text="Left / Right", slider=True)
+        col_rim.prop(scene, "zzz_rim_up_down", text="Up / Down", slider=True)
+        if getattr(scene, "zzz_light_mode", "0") == "6":
             col_rim.prop(scene, "zzz_rim_light_color", text="Color")
-            col_rim.prop(scene, "zzz_rim_coverage", text="Coverage", slider=True)
-            col_rim.prop(scene, "zzz_rim_brightness", text="Brightness", slider=True)
-            col_rim.prop(scene, "zzz_rim_left_right", text="Left / Right", slider=True)
-            col_rim.prop(scene, "zzz_rim_up_down", text="Up / Down", slider=True)
 
         # 4. Hair & Clothes Physics
         box_physics = layout.box()
@@ -717,7 +718,7 @@ def register_zzz_properties():
         size=3,
         min=0.0,
         max=1.0,
-        default=(1.0, 1.0, 1.0),
+        default=(0.65, 0.65, 0.85),
         update=update_zzz_kythera_props,
     )
 

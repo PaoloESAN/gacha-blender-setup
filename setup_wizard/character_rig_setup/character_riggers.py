@@ -288,30 +288,94 @@ class HonkaiStarRailCharacterRigger(CharacterRigger):
             meshes_joined=meshes_joined
         )
 
-        def setup_isaac_face_rig(body_rig):
+        target_rig = (
+            bpy.data.objects.get(f"{armature.name}Rig")
+            or bpy.data.objects.get("ArmatureRig")
+            or next((o for o in bpy.data.objects if o.type == 'ARMATURE' and "Rig" in o.name), None)
+            or bpy.context.active_object
+        )
+
+        try:
+            from setup_wizard.character_rig_setup.hsr_face_rig import hsr_face_rig_main
+            hsr_face_rig_main()
+            print("[HSR RIG] 2D Face slider controls built successfully.")
+        except Exception as e:
+            print(f"[HSR RIG Warning] HSR face rig skipped: {e}")
+
+        def fuse_isaac_face_rig(body_rig):
             import os
             blend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'isaacfacerig.blend')
             if not os.path.exists(blend_path):
                 print(f"[FACE RIG] File not found: {blend_path}")
                 return
 
+            body_head_bone_name = None
+            for candidate in ["DEF-spine.006", "head", "Head", "Head_M"]:
+                if candidate in body_rig.data.bones:
+                    body_head_bone_name = candidate
+                    break
+            if not body_head_bone_name:
+                for b in body_rig.data.bones.keys():
+                    if "head" in b.lower() or "spine.006" in b.lower():
+                        body_head_bone_name = b
+                        break
+
+            if not body_head_bone_name:
+                print("[FACE RIG] Error: Could not find head bone on body rig.")
+                return
+
+            # 1. Clean up dumb FBX facial deformation bones from body_rig so they don't collide
+            # with the fully-rigged bones from isaac FaceRig (avoiding .001 suffixes)
+            dumb_face_bones = set()
+            if "joint_face" in body_rig.data.bones:
+                def _collect_descendants(b):
+                    dumb_face_bones.add(b.name)
+                    for ch in b.children:
+                        _collect_descendants(ch)
+                _collect_descendants(body_rig.data.bones["joint_face"])
+
+            # Clean up raw FBX/rigify eye bones as well
+            eye_bone_candidates = [
+                "eye_L", "eye_R", "eyeEnd_L", "eyeEnd_R", "eyeEnd_01_L", "eyeEnd_01_R",
+                "eye.L", "eye.R", "DEF-eye.L", "DEF-eye.R", "ORG-eye.L", "ORG-eye.R",
+                "eyetrack", "eyetrack_L", "eyetrack_R", "EyeTrack", "EyeTrack_L", "EyeTrack_R",
+                "+EyeBone R A01.001", "+EyeBone L A01.001", "+EyeBone L A01", "+EyeBone R A01",
+                "+EyeBoneA02.L", "+EyeBoneA02.R"
+            ]
+            for eb_name in eye_bone_candidates:
+                if eb_name in body_rig.data.bones:
+                    dumb_face_bones.add(eb_name)
+
+            if dumb_face_bones:
+                orig_active = self.context.view_layer.objects.active
+                self.context.view_layer.objects.active = body_rig
+                bpy.ops.object.mode_set(mode='EDIT')
+                for bname in dumb_face_bones:
+                    eb = body_rig.data.edit_bones.get(bname)
+                    if eb:
+                        body_rig.data.edit_bones.remove(eb)
+                bpy.ops.object.mode_set(mode='OBJECT')
+                if orig_active:
+                    self.context.view_layer.objects.active = orig_active
+                print(f"[FACE RIG] Cleared {len(dumb_face_bones)} unrigged FBX face bones from body rig to allow Isaac FaceRig binding.")
+
+            # 2. Append isaac FaceRig from isaacfacerig.blend
             objects_before = set(bpy.data.objects)
             facerig_obj = None
             appended_coll = None
 
-            # Detect the first collection inside isaacfacerig.blend dynamically using libraries.load
             try:
                 with bpy.data.libraries.load(blend_path, link=False) as (data_from, data_to):
                     if data_from.collections:
                         first_coll_name = data_from.collections[0]
                         data_to.collections = [first_coll_name]
-                        print(f"[FACE RIG] Detected first collection in blend: '{first_coll_name}'")
+                        print(f"[FACE RIG] Detected collection in blend: '{first_coll_name}'")
 
                 for collection in data_to.collections:
                     if collection:
                         appended_coll = collection
-                        if collection.name not in bpy.context.scene.collection.children:
-                            bpy.context.scene.collection.children.link(collection)
+                        if collection.name not in self.context.scene.collection.children:
+                            self.context.scene.collection.children.link(collection)
             except Exception as err:
                 print(f"[FACE RIG] Library load error: {err}")
 
@@ -330,13 +394,20 @@ class HonkaiStarRailCharacterRigger(CharacterRigger):
                             break
 
             if not facerig_obj:
-                print("[FACE RIG] Could not find 'isaac FaceRig' object.")
+                print("[FACE RIG] Error: Could not find 'isaac FaceRig' object.")
                 return
 
-            print(f"[FACE RIG] Successfully imported/found FaceRig armature: '{facerig_obj.name}'")
+            print(f"[FACE RIG] Successfully imported FaceRig armature: '{facerig_obj.name}'")
 
-            # Move isaac FaceRig armature to character collection, planes to per-character WGTS (Append-safe)
-            target_armature_coll = body_rig.users_collection[0] if body_rig.users_collection else bpy.context.scene.collection
+            # Isaac FaceRig carries 650+ junk body drivers from an old character rig
+            # which clobber Head Follow, Neck Follow, etc. when joined. Clear them:
+            facerig_obj.animation_data_clear()
+
+            # Move facerig_obj to character collection and widget planes to WGTS collection
+            target_armature_coll = body_rig.users_collection[0] if body_rig.users_collection else self.context.scene.collection
+            if facerig_obj.name not in target_armature_coll.objects:
+                target_armature_coll.objects.link(facerig_obj)
+
             try:
                 _char_tag = body_rig.get("gacha_character")
             except Exception:
@@ -348,19 +419,12 @@ class HonkaiStarRailCharacterRigger(CharacterRigger):
             except Exception:
                 wgt_coll = bpy.data.collections.get(f"WGTS_{_char_name}")
                 if wgt_coll is None:
-                    wgt_coll = bpy.data.collections.get("WGTS") or bpy.data.collections.get("WGTS_FaceRig") or bpy.data.collections.get("wgt") or bpy.data.collections.new(f"WGTS_{_char_name}")
+                    wgt_coll = bpy.data.collections.get("WGTS") or bpy.data.collections.new(f"WGTS_{_char_name}")
                     try:
                         if wgt_coll.name not in target_armature_coll.children:
                             target_armature_coll.children.link(wgt_coll)
                     except Exception:
                         pass
-
-            if facerig_obj and target_armature_coll:
-                if facerig_obj.name not in target_armature_coll.objects:
-                    target_armature_coll.objects.link(facerig_obj)
-                for coll in list(facerig_obj.users_collection):
-                    if coll != target_armature_coll:
-                        coll.objects.unlink(facerig_obj)
 
             plane_objs = [obj for obj in new_objects if obj != facerig_obj]
             if appended_coll:
@@ -373,62 +437,19 @@ class HonkaiStarRailCharacterRigger(CharacterRigger):
                     if coll != wgt_coll:
                         coll.objects.unlink(p_obj)
 
-            # Keep per-character WGTS nested in the character collection (Append brings it along).
-            # Only orphan legacy global WGTS from the Outliner.
-            if wgt_coll.name.startswith("WGTS_"):
-                try:
-                    if wgt_coll.name not in target_armature_coll.children:
-                        target_armature_coll.children.link(wgt_coll)
-                except Exception:
-                    pass
-                try:
-                    if wgt_coll.name in bpy.context.scene.collection.children:
-                        bpy.context.scene.collection.children.unlink(wgt_coll)
-                except Exception:
-                    pass
-            else:
-                # Unlink wgt_coll from Scene Collection so it is unlinked from the Outliner
-                for parent_coll in list(bpy.data.collections):
-                    if wgt_coll.name in parent_coll.children:
-                        try:
-                            parent_coll.children.unlink(wgt_coll)
-                        except Exception:
-                            pass
-                if wgt_coll.name in bpy.context.scene.collection.children:
-                    try:
-                        bpy.context.scene.collection.children.unlink(wgt_coll)
-                    except Exception:
-                        pass
-
             if appended_coll:
                 try:
                     for parent_coll in bpy.data.collections:
                         if appended_coll.name in parent_coll.children:
                             parent_coll.children.unlink(appended_coll)
-                    if appended_coll.name in bpy.context.scene.collection.children:
-                        bpy.context.scene.collection.children.unlink(appended_coll)
+                    if appended_coll.name in self.context.scene.collection.children:
+                        self.context.scene.collection.children.unlink(appended_coll)
                     bpy.data.collections.remove(appended_coll, do_unlink=True)
-                    print(f"[FACE RIG] Cleaned up temporary collection '{appended_coll.name}'")
-                except Exception as c_err:
-                    print(f"[FACE RIG] Collection cleanup notice: {c_err}")
+                except Exception:
+                    pass
 
-            body_head_bone_name = None
-            for candidate in ["DEF-spine.006", "head", "Head", "Head_M"]:
-                if candidate in body_rig.data.bones:
-                    body_head_bone_name = candidate
-                    break
-            if not body_head_bone_name:
-                for b in body_rig.data.bones.keys():
-                    if "head" in b.lower() or "spine.006" in b.lower():
-                        body_head_bone_name = b
-                        break
-
-            if not body_head_bone_name:
-                print("[FACE RIG] Could not find head bone on body rig.")
-                return
-
+            # 3. Align FaceRig world matrix with body head bone
             facerig_head_bone_name = "DEF-spine.006" if "DEF-spine.006" in facerig_obj.data.bones else facerig_obj.data.bones[0].name
-
             try:
                 body_head_matrix_world = body_rig.matrix_world @ body_rig.pose.bones[body_head_bone_name].matrix
                 facerig_head_matrix_local = facerig_obj.pose.bones[facerig_head_bone_name].matrix
@@ -436,47 +457,283 @@ class HonkaiStarRailCharacterRigger(CharacterRigger):
             except Exception as e:
                 print(f"[FACE RIG] Matrix alignment warning: {e}")
 
-            pbone = facerig_obj.pose.bones.get(facerig_head_bone_name)
-            if pbone:
-                constraint = None
-                for c in pbone.constraints:
-                    if c.type in ['COPY_TRANSFORMS', 'CHILD_OF', 'COPY_LOCATION']:
-                        constraint = c
-                        break
-                if not constraint:
-                    constraint = pbone.constraints.new('COPY_TRANSFORMS')
-                    constraint.name = "Copy Head Transforms"
+            self.context.view_layer.update()
 
-                constraint.target = body_rig
-                constraint.subtarget = body_head_bone_name
+            # In facerig_obj Edit Mode, remove DEF-spine.006 so it doesn't collide with body_rig's DEF-spine.006
+            self.context.view_layer.objects.active = facerig_obj
+            bpy.ops.object.mode_set(mode='EDIT')
+            eb_def_spine = facerig_obj.data.edit_bones.get(facerig_head_bone_name)
+            if eb_def_spine:
+                facerig_obj.data.edit_bones.remove(eb_def_spine)
+            bpy.ops.object.mode_set(mode='OBJECT')
 
-            face_obj = bpy.data.objects.get("Face")
-            if not face_obj:
-                char_name = body_rig.name.replace("Rig", "")
-                face_obj = bpy.data.objects.get(f"Face_{char_name}")
-            if not face_obj:
+            # 4. Join FaceRig into body_rig
+            bpy.ops.object.select_all(action='DESELECT')
+            facerig_obj.select_set(True)
+            body_rig.select_set(True)
+            self.context.view_layer.objects.active = body_rig
+            bpy.ops.object.join()
+            print(f"[FACE RIG] Successfully fused FaceRig into '{body_rig.name}'")
+
+            # 5. Parent facial root bones to body head bone in Edit Mode
+            self.context.view_layer.objects.active = body_rig
+            bpy.ops.object.mode_set(mode='EDIT')
+            head_eb = body_rig.data.edit_bones.get(body_head_bone_name)
+            if head_eb:
+                # Only joint_face needs to be parented to head_eb.
+                # Eye-Track-Follow.L/R and Eye-Scale-Control.L/R must NOT have head_eb as parent,
+                # as Eye-Track-Follow is controlled by Child Of constraint to Eye-Track-Master
+                face_roots = ["joint_face"]
+                for bname in face_roots:
+                    eb = body_rig.data.edit_bones.get(bname)
+                    if eb:
+                        eb.parent = head_eb
+                        print(f"[FACE RIG] Parented '{bname}' to '{head_eb.name}'")
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+            # 6. Ensure all meshes with Armature modifiers point to body_rig
+            for obj in bpy.data.objects:
+                if obj.type == 'MESH':
+                    for mod in obj.modifiers:
+                        if mod.type == 'ARMATURE':
+                            mod.object = body_rig
+
+            # 7. Setup Eye Correction (Adjust Pupil Distance) on eye_L and eye_R
+            has_plate = "plate-settings" in body_rig.pose.bones
+            corr_prop_name = None
+            if has_plate:
+                if "Adjust Pupil Distance" in body_rig.pose.bones["plate-settings"]:
+                    corr_prop_name = "Adjust Pupil Distance"
+                elif "EyeCorrection" in body_rig.pose.bones["plate-settings"]:
+                    corr_prop_name = "EyeCorrection"
+
+            if corr_prop_name:
+                # Find eye shape keys across character meshes
+                eye_shapekeys_L = []
+                eye_shapekeys_R = []
+
+                def is_eye_shapekey(name):
+                    low = name.lower()
+                    if "basis" in low or "default" in low:
+                        return False
+                    eye_words = ["eye", "wink", "close", "blink", "pupil", "jito", "wail", "hostility", "tired", "squint"]
+                    return any(w in low for w in eye_words)
+
+                def is_left_sk(name):
+                    low = name.lower()
+                    return low.endswith(("_l", ".l")) or "_l_" in low or "_left" in low or ".left" in low
+
+                def is_right_sk(name):
+                    low = name.lower()
+                    return low.endswith(("_r", ".r")) or "_r_" in low or "_right" in low or ".right" in low
+
                 for obj in bpy.data.objects:
-                    if obj.type == 'MESH' and ('face' in obj.name.lower() or obj.parent == body_rig):
-                        for mod in obj.modifiers:
-                            if mod.type == 'ARMATURE':
-                                face_obj = obj
-                                break
+                    if obj.type == 'MESH' and obj.data and obj.data.shape_keys:
+                        has_arm = any((m.type == 'ARMATURE' and m.object == body_rig) for m in obj.modifiers)
+                        if has_arm or "face" in obj.name.lower() or "head" in obj.name.lower():
+                            for sk in obj.data.shape_keys.key_blocks:
+                                if is_eye_shapekey(sk.name):
+                                    is_l = is_left_sk(sk.name)
+                                    is_r = is_right_sk(sk.name)
+                                    if is_l:
+                                        eye_shapekeys_L.append((obj, sk.name))
+                                    elif is_r:
+                                        eye_shapekeys_R.append((obj, sk.name))
+                                    else:
+                                        eye_shapekeys_L.append((obj, sk.name))
+                                        eye_shapekeys_R.append((obj, sk.name))
 
-            if face_obj:
-                for mod in face_obj.modifiers:
-                    if mod.type == 'ARMATURE':
-                        mod.object = facerig_obj
-                        print(f"[FACE RIG] Re-targeted '{face_obj.name}' armature modifier to '{facerig_obj.name}'")
-        try:
-            from setup_wizard.character_rig_setup.hsr_face_rig import hsr_face_rig_main
-            hsr_face_rig_main()
-        except Exception as e:
-            print(f"HSR face rig skipped: {e}")
+                for side in ["L", "R"]:
+                    b_eye_name = f"eye_{side}"
+                    pb_eye = body_rig.pose.bones.get(b_eye_name)
+                    if not pb_eye:
+                        continue
+                    # Enable use_offset on Copy Location constraint so location driver works as offset
+                    for c in pb_eye.constraints:
+                        if c.type == 'COPY_LOCATION':
+                            c.use_offset = True
 
-        try:
-            setup_isaac_face_rig(armature)
-        except Exception as e:
-            print(f"Isaac face rig skipped: {e}")
+                    blink_3d_name = f"Eye-Blink-Top.{side}"
+                    close_2d_candidates = ["CTRL-Eye_Close", f"CTRL-Eye_Close_{side}", f"CTRL-Eye_Close.{side}", "CTRL-00_Close01_Eye"]
+                    close_2d_name = None
+                    for cand in close_2d_candidates:
+                        if cand in body_rig.pose.bones:
+                            close_2d_name = cand
+                            break
+
+                    try:
+                        pb_eye.driver_remove("location", 1)
+                    except Exception:
+                        pass
+
+                    fc = pb_eye.driver_add("location", 1)
+                    drv = fc.driver
+                    drv.type = 'SCRIPTED'
+
+                    v_corr = drv.variables.new()
+                    v_corr.name = "corr"
+                    v_corr.type = 'SINGLE_PROP'
+                    v_corr.targets[0].id = body_rig
+                    v_corr.targets[0].data_path = f'pose.bones["plate-settings"]["{corr_prop_name}"]'
+
+                    expr_terms = ["0.0"]
+                    if blink_3d_name in body_rig.pose.bones:
+                        pb_b3d = body_rig.pose.bones.get(blink_3d_name)
+                        lim_3d = 0.03
+                        if pb_b3d:
+                            for c in pb_b3d.constraints:
+                                if c.type == 'LIMIT_LOCATION' and c.use_min_z:
+                                    if abs(c.min_z) > 0.0001:
+                                        lim_3d = abs(c.min_z)
+                                        break
+                        v_3d = drv.variables.new()
+                        v_3d.name = "w3d"
+                        v_3d.type = 'TRANSFORMS'
+                        v_3d.targets[0].id = body_rig
+                        v_3d.targets[0].bone_target = blink_3d_name
+                        v_3d.targets[0].transform_space = 'LOCAL_SPACE'
+                        v_3d.targets[0].transform_type = 'LOC_Z'
+                        expr_terms.append(f"-w3d/{lim_3d:.4f}")
+
+                    if close_2d_name:
+                        pb_close = body_rig.pose.bones.get(close_2d_name)
+                        lim_2d = 0.02
+                        if pb_close:
+                            for c in pb_close.constraints:
+                                if c.type == 'LIMIT_LOCATION' and c.use_min_z:
+                                    if abs(c.min_z) > 0.0001:
+                                        lim_2d = abs(c.min_z)
+                                        break
+                        v_2d = drv.variables.new()
+                        v_2d.name = "w2d"
+                        v_2d.type = 'TRANSFORMS'
+                        v_2d.targets[0].id = body_rig
+                        v_2d.targets[0].bone_target = close_2d_name
+                        v_2d.targets[0].transform_space = 'LOCAL_SPACE'
+                        v_2d.targets[0].transform_type = 'LOC_Z'
+                        expr_terms.append(f"-w2d/{lim_2d:.4f}")
+
+                    # Add shape key variables compactly
+                    sks_for_side = eye_shapekeys_L if side == "L" else eye_shapekeys_R
+                    for idx, (mesh_obj, sk_name) in enumerate(sks_for_side):
+                        v_name = f"s{idx}"
+                        test_terms = expr_terms + [v_name]
+                        test_expr = f"-(0.005*min(1.0,max({','.join(test_terms)})))*corr"
+                        if len(test_expr) > 245:
+                            break
+                        v_sk = drv.variables.new()
+                        v_sk.name = v_name
+                        v_sk.type = 'SINGLE_PROP'
+                        v_sk.targets[0].id_type = 'KEY'
+                        v_sk.targets[0].id = mesh_obj.data.shape_keys
+                        v_sk.targets[0].data_path = f'key_blocks["{sk_name}"].value'
+                        expr_terms.append(v_name)
+
+                    drv.expression = f"-(0.005*min(1.0,max({','.join(expr_terms)})))*corr"
+                print(f"[FACE RIG] Eye pushback (Adjust Pupil Distance) drivers configured on eye_L and eye_R with {len(eye_shapekeys_L)} L-keys and {len(eye_shapekeys_R)} R-keys.")
+
+            print("[FACE RIG] Fusion and armature modifier targets verified.")
+
+        if target_rig:
+            try:
+                fuse_isaac_face_rig(target_rig)
+            except Exception as e:
+                print(f"[HSR RIG Warning] Isaac face rig fusion skipped: {e}")
+
+
+        def join_extra_armatures(body_rig):
+            if not body_rig:
+                return
+            body_rig_name = body_rig.name
+            # Check for any unmerged armatures (Lighting Panel, FaceRig, etc.)
+            for obj in list(bpy.data.objects):
+                try:
+                    if obj.type != 'ARMATURE' or obj == body_rig or obj.name == body_rig_name:
+                        continue
+                    o_low = obj.name.lower()
+                    if any(k in o_low for k in ['lighting', 'panel', 'facerig', 'isaac']):
+                        obj_name = obj.name
+                        try:
+                            if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+                                bpy.ops.object.mode_set(mode='OBJECT')
+                        except Exception:
+                            pass
+                        try:
+                            bpy.ops.object.select_all(action='DESELECT')
+                            obj.select_set(True)
+                            body_rig.select_set(True)
+                            bpy.context.view_layer.objects.active = body_rig
+                            bpy.ops.object.join()
+                            print(f"[HSR RIG] Joined '{obj_name}' into '{body_rig_name}' with bpy.ops.object.join()")
+                        except Exception as join_err:
+                            print(f"[HSR RIG Warning] Failed to join '{obj_name}' into '{body_rig_name}': {join_err}")
+                except ReferenceError:
+                    pass
+                except Exception as loop_err:
+                    print(f"[HSR RIG Warning] Join check notice: {loop_err}")
+
+        if target_rig:
+            join_extra_armatures(target_rig)
+
+        def cleanup_facerig_and_props_collections(body_rig):
+            if hasattr(body_rig.data, "collections"):
+                colls = body_rig.data.collections
+                face_coll = colls.get("Face") or colls.new("Face")
+                root_coll = colls.get("Root") or colls.new("Root")
+                other_coll = colls.get("Other") or colls.new("Other")
+                to_remove = []
+                for c in colls:
+                    c_low = c.name.lower()
+                    if "facerig" in c_low or "face hook" in c_low:
+                        for b in list(c.bones):
+                            if "hook" in b.name.lower():
+                                other_coll.assign(b)
+                            else:
+                                face_coll.assign(b)
+                        to_remove.append(c)
+                    elif c.name in ["Props", "props"]:
+                        w_coll = colls.get("Weapon") or colls.new("Weapon")
+                        for b in list(c.bones):
+                            w_coll.assign(b)
+                        to_remove.append(c)
+                    elif "weaponbox" in c_low:
+                        target_c = colls.get("Clothes") or colls.get("Other")
+                        if target_c:
+                            for b in list(c.bones):
+                                target_c.assign(b)
+                        to_remove.append(c)
+                for c in to_remove:
+                    try:
+                        colls.remove(c)
+                    except Exception:
+                        pass
+
+                # Move all hook bones to Other and remove from Face
+                for b in body_rig.data.bones:
+                    if "hook" in b.name.lower():
+                        other_coll.assign(b)
+                        if face_coll:
+                            face_coll.unassign(b)
+
+                # Ensure all 3 root bones (root, root.001, root.002) and plate-settings are in Root collection
+                for r_name in ["root", "root.001", "root.002", "plate-settings"]:
+                    rb = body_rig.data.bones.get(r_name)
+                    if rb:
+                        root_coll.assign(rb)
+                        if "Offsets" in colls:
+                            colls["Offsets"].unassign(rb)
+                        if other_coll:
+                            other_coll.unassign(rb)
+                        if r_name == "plate-settings" and face_coll:
+                            face_coll.unassign(rb)
+
+                face_coll.is_visible = True
+                root_coll.is_visible = True
+                if "Weapon" in colls:
+                    actual_w_bones = [b for b in colls["Weapon"].bones if b.name not in ["prop.L", "prop.R"]]
+                    colls["Weapon"].is_visible = len(actual_w_bones) > 0
+
+        cleanup_facerig_and_props_collections(armature)
 
         # Final sweep: planes (Plane.001...) + Head Origin into WGTS_<Char>
         try:

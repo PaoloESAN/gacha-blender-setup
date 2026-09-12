@@ -40,6 +40,21 @@ SHADER_COLOR_ATTRIBUTE_NAME = "Col"
 IMPORTED_VIA_WIZARD = False
 
 
+def is_rigging_disabled(context=None):
+    """
+    Checks if 'Disable Rigging' is enabled in the setup wizard settings.
+    When True, the original FBX/armature structure (rolls, tails, rest pose)
+    is preserved intact for animation compatibility.
+    """
+    if context is None:
+        context = bpy.context
+    scene = getattr(context, "scene", None)
+    if not scene:
+        return False
+    props = getattr(scene, "character_rigger_props", None)
+    return getattr(props, "disable_rigging", getattr(scene, "disable_rigging", False))
+
+
 def _execute_fbx_import(filepath):
     """
     Executes FBX import using the modern Blender C++ importer (bpy.ops.wm.fbx_import) with default options
@@ -127,10 +142,20 @@ def apply_spine_rest_pose(armature):
 def clear_armature_pose(armature):
     """
     Clears all pose transformations (location, rotation, scale) for all bones in the armature.
+    Also unlinks active animation actions so keyframes do not override the rest pose during rigging.
     Switches to POSE mode, selects all bones, and clears transforms to reset the pose.
     """
     if not armature or armature.type != 'ARMATURE':
         return
+
+    # If armature has an active animation action driving the pose, unlink it (preserving it via fake user)
+    # so the bones return to neutral rest pose before rigging.
+    if armature.animation_data and armature.animation_data.action:
+        try:
+            armature.animation_data.action.use_fake_user = True
+            armature.animation_data.action = None
+        except Exception as e:
+            print(f"[CLEAR POSE] Action notice: {e}")
 
     orig_mode = bpy.context.object.mode if bpy.context.object else 'OBJECT'
 
@@ -578,7 +603,8 @@ def handle_ake_post_import(context):
             context.view_layer.objects.active = armature
             bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
             print("[AKE SETUP] Cleared import pose, rotated -90 deg on X, and applied transforms successfully.")
-            reorient_armature_bones(armature)
+            if not is_rigging_disabled(context):
+                reorient_armature_bones(armature)
         except Exception as e:
             print(f"[AKE SETUP] Pose clear / orientation notice: {e}")
         finally:
@@ -786,23 +812,21 @@ class GI_OT_GenshinImportModel(Operator, ImportHelper, CustomOperatorProperties)
             self.import_character_model(
                 character_model_file_path_or_directory, is_character_model_file
             )
-            if self.game_type not in (
-                GameType.NEVERNESS_TO_EVERNESS.name,
-                GameType.WUTHERING_WAVES.name,
-            ):
-                self.reset_pose_location_and_rotation()
-
-            if self.game_type in (
-                GameType.GENSHIN_IMPACT.name,
-                GameType.HONKAI_STAR_RAIL.name,
-                GameType.ZENLESS_ZONE_ZERO.name,
-                GameType.ARKNIGHTS_ENDFIELD.name,
-            ):
+            # If rigging is disabled, keep the imported armature untouched (preserve rest pose,
+            # bone orientations, tails, and rolls for animation compatibility).
+            if not is_rigging_disabled(context):
                 armatures = [o for o in bpy.data.objects if o.type == "ARMATURE"]
-                if armatures:
-                    if self.game_type == GameType.GENSHIN_IMPACT.name:
-                        clear_armature_pose(armatures[0])
-                    reorient_armature_bones(armatures[0])
+                for arm in armatures:
+                    clear_armature_pose(arm)
+
+                if self.game_type in (
+                    GameType.GENSHIN_IMPACT.name,
+                    GameType.HONKAI_STAR_RAIL.name,
+                    GameType.ZENLESS_ZONE_ZERO.name,
+                    GameType.ARKNIGHTS_ENDFIELD.name,
+                ):
+                    if armatures:
+                        reorient_armature_bones(armatures[0])
 
             self.rename_mesh_color_attribute_name(
                 SHADER_COLOR_ATTRIBUTE_NAME
@@ -1200,7 +1224,7 @@ class GI_OT_GenshinImportModel(Operator, ImportHelper, CustomOperatorProperties)
 
                 self.fix_zzz_eye_shadow()
 
-                if obj and self.game_type in (
+                if obj and not is_rigging_disabled(bpy.context) and self.game_type in (
                     GameType.GENSHIN_IMPACT.name,
                     GameType.HONKAI_STAR_RAIL.name,
                     GameType.ZENLESS_ZONE_ZERO.name,

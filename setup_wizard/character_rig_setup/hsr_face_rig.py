@@ -823,7 +823,7 @@ def setup_hsr_face_rig(mesh_obj, controls, armature, head_name, fwd, up, face_si
     facerig_coll = armature.data.collections.get("Face") or armature.data.collections.get("Facerig") or armature.data.collections.new("Face")
     facerig_coll.is_visible = True
 
-    eye_ctrl_bone_names = ["eyetrack", "eyetrack_L", "eyetrack_R"]
+    eye_ctrl_bone_names = ["Eye-Track-Master", "Eye-Track.L", "Eye-Track.R"]
     for bname in eye_ctrl_bone_names:
         if bname in armature.data.bones:
             b = armature.data.bones[bname]
